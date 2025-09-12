@@ -147,7 +147,7 @@ def main():
     seestadt_workspace = os.path.join(workspace, "Seestadt")
     
     # Create directory structure for model files and results
-    dir_input, dir_model, dir_result, dir_visualization = create_dirs(seestadt_workspace)
+    dir_input, dir_model, dir_result = create_dirs(seestadt_workspace)
     
     print(f"Workspace created at: {seestadt_workspace}")
     print(f"Model files will be saved to: {dir_model}")
@@ -201,7 +201,7 @@ def create_dirs(dir_project):
     Returns
     -------
     tuple
-        (dir_input, dir_model, dir_result, dir_visualization) directory paths
+        (dir_input, dir_model, dir_result) directory paths
     """
     if not os.path.exists(dir_project):
         os.makedirs(dir_project)
@@ -222,7 +222,7 @@ def create_dirs(dir_project):
     if not os.path.exists(design_dir):
         os.makedirs(design_dir)
     
-    return directories['input'], directories['model'], directories['result'], directories['visualization']
+    return directories['input'], directories['model'], directories['result']
 
 
 def load_seestadt_uesgraph():
