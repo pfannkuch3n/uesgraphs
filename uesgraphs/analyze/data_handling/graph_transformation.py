@@ -2,19 +2,41 @@ import itertools
 
 def get_pipes_for_node(graph_sysm, node_id):
     """
-    Identifies all pipes in the system model graph connected to a specified node in the
-    uesgraphs
+    Identifies all pipes in the system model graph connected to a specified node.
+
+    Requires the system model to have 'node_0' and 'node_1' attributes on pipe nodes.
+    These attributes are automatically set when saving and loading via JSON.
+
     Args:
-        graph_sysm (uesgraphs.systemmodels.systemmodelheating.SystemModelHeating): 
-                                The system model graph where pipes are nodes and 
-                                     connections are edges
-        node_id (str): The ID or name of the node for which to find connected pipes
-    
+        graph_sysm (uesgraphs.systemmodels.systemmodelheating.SystemModelHeating):
+            The system model graph where pipes are nodes and connections are edges
+        node_id (str or int):
+            The name or ID of the node for which to find connected pipes
+
+    Returns:
+        list: List of pipe node IDs connected to the specified node
+
+    Raises:
+        ValueError: If system model lacks node_0/node_1 attributes (not saved/loaded via JSON)
     """
     relevant_pipes = []
+
+    # Check if first pipe has required attributes
+    if graph_sysm.nodelist_pipe:
+        first_pipe = graph_sysm.nodelist_pipe[0]
+        if "node_0" not in graph_sysm.nodes[first_pipe] or "node_1" not in graph_sysm.nodes[first_pipe]:
+            raise ValueError(
+                f"System model is missing 'node_0' and 'node_1' attributes on pipe nodes. "
+                f"These attributes are required for node-to-port mapping.\n"
+                f"Solution: Save the uesgraphs to JSON first and reload it:\n"
+                f"This will ensure all required attributes are properly set."
+            )
+
+    # Find pipes connected to this node
     for pipe in graph_sysm.nodelist_pipe:
         if graph_sysm.nodes[pipe].get("node_0") == node_id or graph_sysm.nodes[pipe].get("node_1") == node_id:
             relevant_pipes.append(pipe)
+
     return relevant_pipes
 
 def get_ports_for_network_node(graph_sysm, pipe_nodes_sysm):
@@ -56,35 +78,46 @@ def get_ports_for_network_node(graph_sysm, pipe_nodes_sysm):
             
     return ports_per_node
 
-def get_ports_for_bldg_node(graph_sysm,name):
+def get_ports_for_bldg_node(graph_sysm, name):
     """
     Identifies the connection ports for a building node (consumer or supplier).
-    
-    Building nodes are special terminal nodes that have only one pipe connection.
+
+    Building nodes are special terminal nodes that typically have only one pipe connection.
     Their port handling differs from junction nodes.
 
     Args:
-        graph_sysm (uesgraphs.systemmodels.systemmodelheating.SystemModelHeating): 
-                                The system model graph where pipes are nodes and 
-                                     connections are edges
-        name: str: The name of the building node for which to find connected ports
+        graph_sysm (uesgraphs.systemmodels.systemmodelheating.SystemModelHeating):
+            The system model graph where pipes are nodes and connections are edges
+        name (str):
+            The name of the building node for which to find connected ports
+
     Returns:
         set: A set of ports connected to the building node
+
+    Notes:
+        If multiple pipes are connected to the building, all ports are included
+        (they should yield the same simulation results).
     """
     for bldg_model in graph_sysm.nodelist_building:
-        ports_per_bldg = set()
         # Find the building node in system model graph that matches the uesgraph node
         if name == graph_sysm.nodes[bldg_model]["name"]:
+            ports_per_bldg = set()
+
             # Get the edges connected to the building node
             adj_edges = graph_sysm.edges(bldg_model)
             if len(adj_edges) > 1:
-                print(f"Interesting case, cause multiple pipes are connected to building {name}")
-            # Since edges in the system models graph correspond to nodes in uesgraph both connections 
-                # should get the same simulation results
+                print(f"Note: Multiple pipes ({len(adj_edges)}) connected to building '{name}'")
+
+            # Since edges in the system models graph correspond to nodes in uesgraph,
+            # both connections should get the same simulation results
             for edge in adj_edges:
                 ports_per_bldg.add(graph_sysm.edges[edge]['con1'])
                 ports_per_bldg.add(graph_sysm.edges[edge]['con2'])
+
             return ports_per_bldg
+
+    # If we get here, building was not found
+    return set()
         
 def validate_structural_node_port_mapping(uesgraph, node_to_ports_mapping):
    """
