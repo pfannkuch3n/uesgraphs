@@ -30,9 +30,9 @@ Climate](https://www.ebc.eonerc.rwth-aachen.de/cms/~dmzz/E-ON-ERC-EBC/?lidx=1).
 
 If you have any questions regarding the tool, feel free to contact us at [ebc-tools@eonerc.rwth-aachen.de](mailto:ebc-tools@eonerc.rwth-aachen.de).
 
-## :rocket: Quick start
+## 🚀 Quick start
 
-### :wrench: Install UESgraphs
+### 🔧 Install UESgraphs
 
 We recommend using **Conda** or **Anaconda** for installing **UESgraphs**. Usage of `python venv` has shown to cause trouble in the installation process.
 
@@ -183,7 +183,7 @@ For more detailed information, please check the `pyproject.toml` file.
      For more information on OMPython, refer to the [OMPython documentation](https://openmodelica.org/doc/OpenModelicaUsersGuide/latest/ompython.html#ompython).
 
 
-### :bulb: Usage
+### 💡 Usage
 
 You can assemble a graph of an urban energy system by adding buildings, network
 nodes and edges to an `UESGraph` object. The following code builds a heating
@@ -285,25 +285,25 @@ import uesgraphs
 print(f"UESgraphs version: {uesgraphs.__version__}")
 ```
 
-## :herb: Branch strategy
+## 🌿 Branch strategy
 
 Main branch: `master`
 
-## :memo: Documentation
+## 📝 Documentation
 
 Further documentation is available in the `/doc` directory. There you find:
 
 - Manual that gives a gist
 - Development guidelines
 
-## :page_facing_up: License
+## 📄 License
 
 **UESgraphs** is released by RWTH Aachen University, E.ON Energy
 Research Center, Institute for Energy Efficient Buildings and Indoor Climate,
 under the
 [MIT License](https://github.com/RWTH-EBC/uesgraphs/blob/master/LICENSE.md).
 
-## :books: How to cite UESgraphs
+## 📚 How to cite UESgraphs
 
 To reference **UESgraphs**, please cite the following papers: 
 + (doi [10.1016/j.energy.2016.04.023](https://doi.org/10.1016/j.energy.2016.04.023)):
@@ -348,7 +348,7 @@ The BibTex for this paper is:
 }
 ```
 
-## :clap: Acknowledgements
+## 👏 Acknowledgements
 
 This  work  was  supported  by  the  Helmholtz  Association  under  the  Joint  Initiative  “Energy System 2050 – A Contribution of the Research Field Energy”.
 
