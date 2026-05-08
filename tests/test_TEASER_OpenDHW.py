@@ -14,6 +14,14 @@ from uesgraphs.teaser_integration.utilities import run_sim_teaser
 # Close all loggers to release file handles
 import logging
 
+# Skip test if dymola is not available
+try:
+    import dymola
+    HAS_DYMOLA = True
+except ImportError:
+    HAS_DYMOLA = False
+
+@pytest.mark.skipif(not HAS_DYMOLA, reason="dymola not installed")
 class TestE17IntegrationTEASER_OpenDHW:
     """Integration test using example e17."""
 

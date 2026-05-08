@@ -17,7 +17,10 @@ import tempfile
 from typing import Optional
 
 from teaser.project import Project
-from dymola.dymola_interface import DymolaInterface
+try:
+    from dymola.dymola_interface import DymolaInterface
+except ImportError:
+    DymolaInterface = None
 
 
 def set_up_file_logger(name: str, log_dir: Optional[str] = None, level: int = logging.ERROR) -> logging.Logger:
