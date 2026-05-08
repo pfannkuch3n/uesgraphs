@@ -73,21 +73,6 @@ Follow these steps to install **UESgraphs** using Conda:
      pip install uesgraphs[dev]
      ```
 
-   - **For pandapipes simulations**:
-     ```bash
-     pip install uesgraphs[pandapipes]
-     ```
-
-   - **For TEASER integration**:
-     ```bash
-     pip install uesgraphs[TEASER]
-     ```
-
-   - **For OpenDHW integration usage**:
-     ```bash
-     pip install uesgraphs[DHW]
-     ```
-
    - **Complete installation with all dependencies**:
      ```bash
      pip install uesgraphs[full]
@@ -128,21 +113,6 @@ Follow these steps to install **UESgraphs** using Conda:
      pip install -e <path/to/your/uesgraphs>[dev]
      ```
 
-   - **For pandapipes simulations**:
-     ```bash
-     pip install -e <path/to/your/uesgraphs>[pandapipes]
-     ```
-
-   - **For TEASER integration**:
-     ```bash
-     pip install -e <path/to/your/uesgraphs>[TEASER]
-     ```
-     
-   - **For OpenDHW integration usage**:
-     ```bash
-     pip install -e <path/to/your/uesgraphs>[DHW]
-     ```
-
    - **Complete installation with all dependencies**:
      ```bash
      pip install -e <path/to/your/uesgraphs>[full]
@@ -164,9 +134,9 @@ Follow these steps to install **UESgraphs** using Conda:
 
 For more detailed information, please check the `pyproject.toml` file.
 
-7. **Install OpenModelica and OMPython to Run Examples 9 to 14**
+7. **Install OpenModelica and OMPython to Run Examples 9 to 15**
 
-   To run examples 9 to 14, you need to install **OpenModelica** and **OMPython**.
+   To run examples 9 to 15, you need to install **OpenModelica** and **OMPython**.
 
    - **Download and Install OpenModelica**:
 
