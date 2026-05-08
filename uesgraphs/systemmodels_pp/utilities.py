@@ -420,7 +420,7 @@ def uesgraph_to_pandapipes(uesgraph, simplification_level,
 
     Returns:
     --------
-    None
+        ---
 
     Raises:
     -------

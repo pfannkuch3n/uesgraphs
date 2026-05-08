@@ -121,6 +121,17 @@ class TestPipeline:
                         input_cooling=demands_cool,
                         ground_temp_path=ground_temps
                     )
+
+                    uesgraph_to_pandapipes(
+                        uesgraph=graph,
+                        simplification_level=0,
+                        workspace=workspace,
+                        sim_setup_path=params_template_year,
+                        input_heating=demands_heat,
+                        input_dhw=demands_dhw,
+                        input_cooling=demands_cool,
+                        ground_temp_path=ground_temps
+                    )
                 
                 # Step 3: Verify output
                 models_dir = os.path.join(workspace, 'models')
