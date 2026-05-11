@@ -715,6 +715,9 @@ def estimate_m_flow_nominal_tablebased(graph, network_type):
 
     for edge in graph.edges():
         diameter = graph.edges[edge]["diameter"]
+        if diameter is None:
+            warnings.warn(f"Edge {edge} has no diameter (attr_dict={graph.edges[edge].get('attr_dict')}), skipping")
+            continue
         m_flow_nominal = pipe_dict[
             min(pipe_dict, key=lambda x: abs(x - diameter * 1000))
         ]
@@ -1426,7 +1429,7 @@ def load_pipe_catalog(catalog_name: str = "isoplus",custom_path: Optional[str] =
     """
     
     if custom_path:
-        catalog_path = os.path.join(custom_path, f"{catalog_name}.csv")
+        catalog_path = os.path.join(custom_path)
     else:
         # Einfacher relativer Pfad
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1441,27 +1444,29 @@ def load_pipe_catalog(catalog_name: str = "isoplus",custom_path: Optional[str] =
     try:
         # Load CSV data, ignoring comment lines starting with '#'
         catalog_df = pd.read_csv(catalog_path, comment='#')
-        
-        # Validate required columns exist
+
         required_columns = ['DN', 'inner_diameter', 'mass_flow_min', 'mass_flow_max']
         missing_columns = [col for col in required_columns if col not in catalog_df.columns]
-        
         if missing_columns:
             raise ValueError(
                 f"Catalog '{catalog_name}' is missing required columns: {missing_columns}\n"
                 f"Available columns: {catalog_df.columns.tolist()}"
             )
-        
-        # Sort by DN for consistent ordering
+
         catalog_df = catalog_df.sort_values('inner_diameter').reset_index(drop=True)
-        
+
+        # NEU: Provenienz für Fehlermeldungen mitgeben
+        catalog_df.attrs["catalog_name"] = catalog_name
+        catalog_df.attrs["catalog_path"] = catalog_path
+        catalog_df.attrs["custom_path_used"] = custom_path is not None
+
         return catalog_df
-        
+
     except pd.errors.EmptyDataError:
         raise ValueError(f"Catalog file '{catalog_name}' is empty or contains no valid data")
     except pd.errors.ParserError as e:
         raise ValueError(f"Error parsing catalog file '{catalog_name}': {str(e)}")
-
+        
 def get_inner_diameter_from_DN(dn_value, catalog_name="isoplus",custom_path: Optional[str]=None):
     """
     Quick lookup for inner diameter based on DN value only.
@@ -1488,19 +1493,55 @@ def get_inner_diameter_from_DN(dn_value, catalog_name="isoplus",custom_path: Opt
     For more sophisticated selection based on mass flow, 
     use get_pipe_catalog_DN_m_flow() instead.
     """
-    catalog = load_pipe_catalog(catalog_name,custom_path=custom_path)
-        # Convert DN value to match catalog format
-    # Handle both numeric (200) and string ("DN200", "200") inputs
-    if isinstance(dn_value, str):
-        if not dn_value.startswith('DN'):
-            search_key = f"DN{dn_value}"
-        else:
-            search_key = dn_value
-    else:
-        search_key = f"DN{int(dn_value)}"  # Convert 200 → "DN200"
-    matching = catalog[catalog['DN'] == search_key]
-    if not matching.empty:
-        return float(matching.iloc[0]['inner_diameter'])
+    if dn_value is None or (isinstance(dn_value, str) and not dn_value.strip()):
+        raise ValueError(
+            f"Cannot look up inner diameter: dn_value is empty (got {dn_value!r}). "
+            f"Check the GeoJSON feature — it likely has no DN attribute set."
+        )
 
-    return None
+    catalog = load_pipe_catalog(catalog_name, custom_path=custom_path)
+
+    try:
+        if isinstance(dn_value, str):
+            search_key = dn_value if dn_value.startswith("DN") else f"DN{dn_value}"
+        else:
+            search_key = f"DN{int(dn_value)}"
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            f"Cannot convert dn_value={dn_value!r} (type={type(dn_value).__name__}) "
+            f"into a DN key. Expected int, float, or string like '200' or 'DN200'."
+        ) from e
+
+    matching = catalog[catalog["DN"] == search_key]
+    if not matching.empty:
+        return float(matching.iloc[0]["inner_diameter"])
+
+    cat_name = catalog.attrs.get("catalog_name", catalog_name)
+    cat_path = catalog.attrs.get("catalog_path", "<unknown>")
+    available = catalog["DN"].tolist()
+    raise ValueError(
+        f"DN '{search_key}' not found in pipe catalog '{cat_name}'.\n"
+        f"  Catalog file: {cat_path}\n"
+        f"  Input value:  dn_value={dn_value!r}\n"
+        f"  Available DN: {available}\n"
+        f"Either add the missing DN row to the catalog CSV, "
+        f"pass a custom_path to a catalog that contains it, "
+        f"or fix the GeoJSON DN attribute."
+    )
+    
+    # catalog = load_pipe_catalog(catalog_name,custom_path=custom_path)
+    #     # Convert DN value to match catalog format
+    # # Handle both numeric (200) and string ("DN200", "200") inputs
+    # if isinstance(dn_value, str):
+    #     if not dn_value.startswith('DN'):
+    #         search_key = f"DN{dn_value}"
+    #     else:
+    #         search_key = dn_value
+    # else:
+    #     search_key = f"DN{int(dn_value)}"  # Convert 200 → "DN200"
+    # matching = catalog[catalog['DN'] == search_key]
+    # if not matching.empty:
+    #     return float(matching.iloc[0]['inner_diameter'])
+
+    # return None
 
