@@ -11,9 +11,9 @@ import sys
 sys.path.insert(0, os.path.abspath('../../'))
 
 project = 'uesgraphs'
-copyright = '2025, Institute for Energy Efficient Buildings and Indoor Climate (EBC), RWTH Aachen University'
+copyright = '2026, Institute for Energy Efficient Buildings and Indoor Climate (EBC), RWTH Aachen University'
 author = 'Rahul Karuvingal'
-release = '2.2.0'
+release = '2.2.1'
 
 # The master toctree document
 master_doc = 'index'
@@ -30,7 +30,8 @@ extensions = [
     'sphinx.ext.viewcode',
     'sphinx.ext.napoleon',
     'sphinx.ext.intersphinx',
-    'sphinx.ext.autosummary'
+    'sphinx.ext.autosummary',
+    'sphinx.ext.mathjax'
 ]
 
 templates_path = ['_templates']

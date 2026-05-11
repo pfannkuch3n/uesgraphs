@@ -546,10 +546,12 @@ class SystemModelHeating(UESGraph):
         Uses a lookup table based on standard district heating pipe dimensions for
         insulation class 3 according to district heating planning handbook.
 
-        Args:
+        Parameters
+        ----------
             inner_diameter (float): pipe diameter in mm
 
-        Returns:
+        Returns
+        -------
             Tuple[float, float]: Inner diameter in meters, insulation thickness in meters
 
         Note:
@@ -606,7 +608,8 @@ class SystemModelHeating(UESGraph):
         Args:
             l_pipe (float): Length of the pipe in meters
 
-        Returns:
+        Returns
+        -------
             float: Total loss coefficient (xi) for the pipe
 
         References:
@@ -664,6 +667,7 @@ class SystemModelHeating(UESGraph):
         logger.info(f"Circ_pump_pressure: {self.pp_network.res_circ_pump_pressure}")
         logger.info(f"Heat consumer: {self.pp_network.res_heat_consumer}")
         logger.info(f"Circ_pump_pressure: {self.pp_network.res_pipe}")
+
     def pipe_order(self, pipe_list, heat_source_ids, heat_source_r_ids, logger=None):
         pp.pipeflow(
             net=self.pp_network,
@@ -775,7 +779,8 @@ class SystemModelHeating(UESGraph):
             This function calculates with an implicit euler scheme the temperature
             distribution within one pipe.
 
-            Args:
+            Parameters
+            ----------
                 T_in (float): Inflow temperature of the pipe in K
                 T_prev (list): Previous temperature distribution in the pipe, all values in K
                 m_dot (float): Mass flow in the pipe in kg/s
@@ -788,7 +793,8 @@ class SystemModelHeating(UESGraph):
                 rho (float): Density in kg/m^3
                 sections (int): Number of sections
 
-            Returns:
+            Returns
+            -------
                 list: Temperature distrubtion list in the pipe for the next time step
 
         """
@@ -819,7 +825,8 @@ class SystemModelHeating(UESGraph):
                 pipe_temp_history (dict): Temperatures of pipes to different time steps
                 pipe_subset (list): Pipes that are used to find the inflowing pipes
 
-            Returns:
+            Returns
+            -------
                 ---
 
         """
@@ -889,6 +896,28 @@ class SystemModelHeating(UESGraph):
             df.to_csv(os.path.join(comp_folder, f"{var}.csv"), sep=";")
 
     def run_timeseries_dpp(self, pipe_list, heat_source_ids, heat_source_r_ids, save_at, logger=None):
+        """
+        This function runs the dynamic simulation of the pandapipes network and logs the results.
+        
+        Parameters
+        ----------
+        pipe_list : list
+            List of pipes with their details
+        heat_source_ids : list
+            List of heat source junction IDs
+        heat_source_r_ids : list
+            List of heat source return junction IDs
+        save_at : str
+            Folder path to save the results
+        logger : logging.Logger, optional
+            Logger instance for debugging
+        
+        Returns
+        -------
+            ---
+        
+        """
+        
         # Create pipe order for temperature calculation
         sorted_supply_pipes, sorted_return_pipes, layer_by_pipe, layer_by_pipe_return, pipe_list_in = self.pipe_order(pipe_list, heat_source_ids, heat_source_r_ids, logger)
         
@@ -1121,6 +1150,8 @@ class SystemModelHeating(UESGraph):
         ----------
         save_at : str
             Path where the results will be saved
+        mode : str
+            Mode of the simulation, either "static" for static simulation or "transient" for transient pandapipes simulation.
         logger : logging.Logger, optional
             Logger instance for debugging
         

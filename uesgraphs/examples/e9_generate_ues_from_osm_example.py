@@ -1,8 +1,4 @@
-# -*- coding: utf-8 -*-
-# @Author: MichaMans
-# @Date:   2019-03-12 08:26:20
-# @Last Modified by:   rka-lko
-# @Last Modified time: 2024-01-17
+
 
 """Generate complex Urban Energy System (UES) Graph from OpenStreetMap (OSM) data.
 

@@ -1,8 +1,4 @@
-# -*- coding: utf-8 -*-
-# @Author: MichaMans
-# @Date:   2019-03-12 08:26:20
-# @Last Modified by:   rka-lko
-# @Last Modified time: 2025-01-17
+
 """How to load UESGraphs from JSON and OSM files."""
 
 import os

@@ -42,7 +42,10 @@ def set_up_terminal_logger(name: str, level: int = logging.INFO) -> logging.Logg
 
     return logger
 
-from dymola.dymola_interface import DymolaInterface
+try:
+    from dymola.dymola_interface import DymolaInterface
+except ImportError:
+    DymolaInterface = None
 
 
 class WorkerSimulation(multiprocessing.Process):
