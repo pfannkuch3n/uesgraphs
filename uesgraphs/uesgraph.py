@@ -1397,7 +1397,8 @@ class UESGraph(nx.Graph):
             name,
             save_path=None,
             generate_visualizations=False,
-            tolerance=1e-8
+            tolerance=1e-8,
+            dn_catalog=None
         ):
         """
         Import district heating network from GeoJSON files.
@@ -1472,7 +1473,7 @@ class UESGraph(nx.Graph):
 
 
         # Build network topology from network geojson
-        self._process_network_from_geojson(network_path)
+        self._process_network_from_geojson(network_path, dn_catalog=dn_catalog)
 
         if folder_vis: # Generate visualization
             self._create_network_visualization(folder_vis, filename="1_basic_uesgraph")
@@ -1508,7 +1509,7 @@ class UESGraph(nx.Graph):
 
         return True
     
-    def _process_network_from_geojson(self, network_path):
+    def _process_network_from_geojson(self, network_path, dn_catalog=None):
         """
         Process network pipes from GeoJSON and add nodes/edges to the graph.
         
@@ -1540,11 +1541,11 @@ class UESGraph(nx.Graph):
             # Process geometry based on its type
             if isinstance(geometry, MultiLineString):
                 for linestr in geometry.geoms:
-                    self.__process_linestring(linestr, attributes, dn_value)
+                    self.__process_linestring(linestr, attributes, dn_value, dn_catalog=dn_catalog)
             else:  # Simple LineString
-                self.__process_linestring(geometry, attributes, dn_value)
+                self.__process_linestring(geometry, attributes, dn_value, dn_catalog=dn_catalog)
          
-    def __process_linestring(self, linestring, attributes, dn_value=None):
+    def __process_linestring(self, linestring, attributes, dn_value=None, dn_catalog=None):
         """
         Process a single LineString geometry into network nodes and edges.
         
@@ -1586,7 +1587,7 @@ class UESGraph(nx.Graph):
                 )
                 
                 # Add edge with appropriate attributes
-                self.__add_edge_with_attributes(node1, node2, edge_attributes, dn_value)
+                self.__add_edge_with_attributes(node1, node2, edge_attributes, dn_value, dn_catalog=dn_catalog)
         else:
             # Handle simple linestring (two points)
             node1 = self.add_network_node(
@@ -1603,9 +1604,9 @@ class UESGraph(nx.Graph):
             )
             
             # Add edge with appropriate attributes
-            self.__add_edge_with_attributes(node1, node2, edge_attributes, dn_value)
+            self.__add_edge_with_attributes(node1, node2, edge_attributes, dn_value, dn_catalog=dn_catalog)
         
-    def __add_edge_with_attributes(self, node1, node2, attributes, dn_value=None):
+    def __add_edge_with_attributes(self, node1, node2, attributes, dn_value=None, dn_catalog=None):
         """
         Add an edge with DN-based diameter and other attributes.
         
@@ -1628,11 +1629,13 @@ class UESGraph(nx.Graph):
         from uesgraphs.systemmodels.utilities import get_inner_diameter_from_DN
 
         if dn_value:
+            diameter=get_inner_diameter_from_DN(dn_value, custom_path=dn_catalog)
+ 
             self.add_edge(
                 node1,
                 node2,
                 attr_dict=attributes,
-                diameter=get_inner_diameter_from_DN(dn_value),
+                diameter=diameter,
                 dIns=0.1,
             )
         else:
@@ -1989,7 +1992,10 @@ class UESGraph(nx.Graph):
             #         temp_diameter = self.edges[node, neighbor]["diameter"]
 
             for neighbor in neighbors:
-                if nx.degree(self, neighbor) == 2 and neighbor in nodelist:
+                neighbor_neighbors = list(nx.neighbors(self, neighbor))
+                all_in_nodelist = all(n in nodelist for n in neighbor_neighbors)
+                
+                if nx.degree(self, neighbor) == 2 and neighbor in nodelist and all_in_nodelist:
                     if neighbor not in group["path"]:
                         group["path"].append(neighbor)
                         group = group_nodes(neighbor, group)
