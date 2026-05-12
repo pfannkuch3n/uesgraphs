@@ -60,9 +60,9 @@ repository = "https://github.com/RWTH-EBC/uesgraphs"
 compatible_aixlib_version = "<= '2.1.1'"
 
 [tool.setuptools]
-packages = ["uesgraphs", "uesgraphs.analyze", "uesgraphs.analyze.data_handling", 
-            "uesgraphs.examples", "uesgraphs.systemmodels", "uesgraphs.uesmodels", 
-            "uesgraphs.uesmodels.utilities"]
+packages = ["uesgraphs", "uesgraphs.analyze", "uesgraphs.analyze.data_handling",
+            "uesgraphs.examples", "uesgraphs.systemmodels", "uesgraphs.uesmodels",
+            "uesgraphs.uesmodels.utilities", "uesgraphs.heatnetsim"]
 
 [tool.setuptools.package-data]
 uesgraphs = [

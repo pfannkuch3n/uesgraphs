@@ -11,4 +11,5 @@ Core Modules
    uesgraphs.systemmodels_pp
    uesgraphs.teaser_integration
    uesgraphs.DHW_estimation
+   uesgraphs.heatnetsim
    uesgraphs.utilities

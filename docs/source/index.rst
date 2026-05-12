@@ -240,6 +240,7 @@ API Documentation
      guides/model_generation_pandapipes
      guides/analysis_tools_pp
      guides/demand_estimation
+     guides/heatnetsim
 
   .. toctree::
      :maxdepth: 2

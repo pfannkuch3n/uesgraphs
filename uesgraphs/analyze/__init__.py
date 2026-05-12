@@ -11,7 +11,7 @@ Main Functions:
 
 Quick Start:
 ```python
-from uesgraphs.analysis import assign_data_pipeline
+from uesgraphs.analyze import assign_data_pipeline
 from datetime import datetime
 
 # Assign simulation data to network
