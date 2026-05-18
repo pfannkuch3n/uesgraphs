@@ -16,10 +16,13 @@ systems or generate simulation models. **Version 2** has been updated with the f
 - **Simplified Installation**: Easier installation with the removal of unnecessary Python library dependencies.
 - **Enabled Logging Features**: Logging functionality has been activated for better tracking and debugging.
 - **Enhanced Compatibility**: Compatible with the latest versions of Modelica and the AixLib package.
+- **Demand Estimation**: Estimation of heating and cooling demands using the tool [TEASER](https://github.com/rwth-ebc/teaser) and integrated code from [OpenDHW](https://github.com/RWTH-EBC/OpenDHW) for estimating domestic hot water demands for the buildings.
+- **Hydraulic Network Sizing**: A physics-based approach for automated mass flow calculation and pipe sizing in district heating networks.
+- **Quasi-static Simulation**: Quasi-static simulations for district heating networks using [pandapipes](https://github.com/e2nIEE/pandapipes ).
+- **Dynamic Python Based Simulation**: Quick dynamic network simulations using python for thermo-hydraulic analysis of the network. 
 - **Improved Visualization**: Enhanced visualization features for better representation of results.
-- **Addition of `analyze.py`**: Introduced `analyze.py` to enable simulation post-processing and visualization for dynamic district simulations.
 - **Updated Model Template Generation**: The template generation feature for Modelica models has been updated, enabling automation of multiple models.
-- **Updated Examples**: The examples for **UESgraphs** have been updated, and two new examples have been added to clarify the use of template generation and the `analyze.py` script.
+- **Updated Examples**: The examples for **UESgraphs** have been updated, and new examples are added for the new features.
 
 **UESgraphs** is being developed at [RWTH Aachen University, E.ON Energy
 Research Center, Institute for Energy Efficient Buildings and Indoor
@@ -27,9 +30,9 @@ Climate](https://www.ebc.eonerc.rwth-aachen.de/cms/~dmzz/E-ON-ERC-EBC/?lidx=1).
 
 If you have any questions regarding the tool, feel free to contact us at [ebc-tools@eonerc.rwth-aachen.de](mailto:ebc-tools@eonerc.rwth-aachen.de).
 
-## :rocket: Quick start
+## 🚀 Quick start
 
-### :wrench: Install UESgraphs
+### 🔧 Install UESgraphs
 
 We recommend using **Conda** or **Anaconda** for installing **UESgraphs**. Usage of `python venv` has shown to cause trouble in the installation process.
 
@@ -131,9 +134,9 @@ Follow these steps to install **UESgraphs** using Conda:
 
 For more detailed information, please check the `pyproject.toml` file.
 
-7. **Install OpenModelica and OMPython to Run Examples 9 to 14**
+7. **Install OpenModelica and OMPython to Run Examples 9 to 15**
 
-   To run examples 9 to 14, you need to install **OpenModelica** and **OMPython**.
+   To run examples 9 to 15, you need to install **OpenModelica** and **OMPython**.
 
    - **Download and Install OpenModelica**:
 
@@ -180,7 +183,7 @@ For more detailed information, please check the `pyproject.toml` file.
      For more information on OMPython, refer to the [OMPython documentation](https://openmodelica.org/doc/OpenModelicaUsersGuide/latest/ompython.html#ompython).
 
 
-### :bulb: Usage
+### 💡 Usage
 
 You can assemble a graph of an urban energy system by adding buildings, network
 nodes and edges to an `UESGraph` object. The following code builds a heating
@@ -282,25 +285,25 @@ import uesgraphs
 print(f"UESgraphs version: {uesgraphs.__version__}")
 ```
 
-## :herb: Branch strategy
+## 🌿 Branch strategy
 
 Main branch: `master`
 
-## :memo: Documentation
+## 📝 Documentation
 
 Further documentation is available in the `/doc` directory. There you find:
 
 - Manual that gives a gist
 - Development guidelines
 
-## :page_facing_up: License
+## 📄 License
 
 **UESgraphs** is released by RWTH Aachen University, E.ON Energy
 Research Center, Institute for Energy Efficient Buildings and Indoor Climate,
 under the
 [MIT License](https://github.com/RWTH-EBC/uesgraphs/blob/master/LICENSE.md).
 
-## :books: How to cite UESgraphs
+## 📚 How to cite UESgraphs
 
 To reference **UESgraphs**, please cite the following papers: 
 + (doi [10.1016/j.energy.2016.04.023](https://doi.org/10.1016/j.energy.2016.04.023)):
@@ -345,7 +348,7 @@ The BibTex for this paper is:
 }
 ```
 
-## :clap: Acknowledgements
+## 👏 Acknowledgements
 
 This  work  was  supported  by  the  Helmholtz  Association  under  the  Joint  Initiative  “Energy System 2050 – A Contribution of the Research Field Energy”.
 

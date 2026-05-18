@@ -2,6 +2,8 @@ from uesgraphs.uesgraph import UESGraph
 
 from uesgraphs.visuals import Visuals
 
+from uesgraphs import heatnetsim
+
 import importlib.metadata
 
 try:

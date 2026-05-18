@@ -256,6 +256,19 @@ def uesgraph_to_modelica(uesgraph, simplification_level,
         os.makedirs(sim_model_dir, exist_ok=True)
         logger.info(f"Modelica files will be saved to: {sim_model_dir}")
 
+        # Step 11: Copy uesgraph to simulation directory for analysis module
+        logger.info("Copying final uesgraph to simulation directory for reproducibility")
+        try:
+            uesgraph.to_json(
+                path=str(sim_model_dir),
+                name="uesgraphs",  # → wird zu uesgraphs.json
+                all_data=True,     # Speichert demand data mit!
+                prettyprint=True
+            )
+            logger.info(f"UESGraph saved to: {os.path.join(sim_model_dir, 'uesgraphs.json')}")
+        except Exception as e:
+            logger.error(f"Failed to save uesgraph to simulation directory: {e}")
+
         # Step 12: Generate Modelica files using Excel-based simulation parameters
         logger.info("Start process of generating Modelica files using Excel parameters")
         sim_name_ix = f"{sim_name}_{str(sim_params['simulation_name'])}"

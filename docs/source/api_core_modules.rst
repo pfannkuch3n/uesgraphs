@@ -8,4 +8,8 @@ Core Modules
    uesgraphs.visuals
    uesgraphs.analyze
    uesgraphs.systemmodels
+   uesgraphs.systemmodels_pp
+   uesgraphs.teaser_integration
+   uesgraphs.DHW_estimation
+   uesgraphs.heatnetsim
    uesgraphs.utilities

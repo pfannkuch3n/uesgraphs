@@ -4,7 +4,7 @@ UESGraphs Modelica Code Generation Pipeline
 Architecture Documentation
 --------------------------
 
-**Version:** 2.1 **Last Updated:** November 2025
+**Version:** 2.2.0 **Last Updated:** April 2026
 
 --------------
 
@@ -536,7 +536,7 @@ Adding a New Component Template
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
-1. **See** :doc:`../guides/Template_generation`
+1. **See** :doc:`../guides/Template_Generation`
 
 2. **Add Graph Attribute** (if component-specific)
    - Add individual attributes required by the new template directly to the uesgraphs
@@ -639,4 +639,4 @@ Debug Workflow
       print(df[['Parameter', 'Value']].head(20))
 
 
-*This document describes the architecture of UESGraphs version 2.1.*
+*This document describes the architecture of UESGraphs version 2.2.0.*

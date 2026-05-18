@@ -29,7 +29,7 @@ Beyond model creation, **UESgraphs** offers comprehensive post-simulation analyt
 Getting Started
 =================
 
-The best way to start is by installing the package and checking out the :doc:`examples`.
+The best way to start is by installing the package and checking out the :doc:`api_examples`.
 
 Follow these steps to install **UESgraphs** using Conda:
 
@@ -66,11 +66,13 @@ Follow these steps to install **UESgraphs** using Conda:
 
         pip install uesgraphs[templates]
 
+
    * **For development (includes testing and coverage tools)**:
 
      .. code-block:: bash
 
         pip install uesgraphs[dev]
+   
 
    * **Complete installation with all dependencies**:
 
@@ -110,6 +112,7 @@ Follow these steps to install **UESgraphs** using Conda:
      .. code-block:: bash
 
         pip install -e <path/to/your/uesgraphs>[templates]
+
 
    * **For development (includes testing and coverage tools)**:
 
@@ -201,7 +204,7 @@ For more detailed information, please check the ``pyproject.toml`` file.
 **UESgraphs** is built with `networkx` as its core library. The typical workflow for the tool involves:
 
 .. image:: _static/uesgraph_function_principle.png
-   :alt: Developed workflow using UESgraphs v 2.0.0
+   :alt: Developed workflow using UESgraphs v 3.0.0
    :align: center
    :width: 100%
 
@@ -214,6 +217,10 @@ The functional principle of **UESgraphs** can be summarized as under:
 * The framework supports automated preprocessing steps such as network cleaning, topology simplification, and hydronic pipe sizing to prepare accurate system models.
 
 * Multiple data input formats are supported, including OpenStreetMap, GIS files, and manual data, enabling integration of heterogeneous spatial and tabular data.
+
+* UESgraphs integrates a DHW and heat estimation with OpenDHW and TEASER and allows a direct simulation with the generated input data.
+
+* UESgraphs allows the execution of quasi-static pandapipes simulations and a dynamic python-based simulation based on the graph structure and the provided input data.
 
 * UESgraphs automates the generation of dynamic simulation models by transforming graph representations into Modelica code through templated model export.
 
@@ -229,7 +236,11 @@ API Documentation
 
      guides/model_generation_pipeline
      guides/hydronic_sizing
-     guides/Template_Generation.rst
+     guides/Template_Generation
+     guides/model_generation_pandapipes
+     guides/analysis_tools_pp
+     guides/demand_estimation
+     guides/heatnetsim
 
   .. toctree::
      :maxdepth: 2
@@ -237,13 +248,19 @@ API Documentation
      
      architecture/modelica_pipeline
      architecture/graph_transformation
+     architecture/pandapipes_pipeline
+     architecture/teaser_opendhw_integration
+     architecture/pandapipes_dynamic
 
   .. toctree::
      :maxdepth: 2
      :caption: API Reference:
 
      api_core_modules
+     api_OpenDHW_int
+     api_TEASER_int
      api_system_models
+     api_system_models_pp
      api_examples
 
 Indices and tables
