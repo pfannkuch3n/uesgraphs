@@ -266,6 +266,7 @@ AIXLIB_MASKS = {
             # Extensive properties - same value at both ports
             "m_flow": "networkModel.pipe{pipe_code}{type}.port_a.m_flow",
             "dp": "networkModel.pipe{pipe_code}{type}.dp",
+            "velocity": "networkModel.pipe{pipe_code}{type}.v_med",
         },
         "node": {
             # Intensive properties - may differ between ports
@@ -274,9 +275,29 @@ AIXLIB_MASKS = {
                 "port_b": "networkModel.pipe{pipe_code}{type}.port_b.p"
             },
             "temperature": {
-                "port_a": "networkModel.pipe{pipe_code}{type}.sta_a.T", 
+                "port_a": "networkModel.pipe{pipe_code}{type}.sta_a.T",
                 "port_b": "networkModel.pipe{pipe_code}{type}.sta_b.T"
             }
+        },
+        "building": {
+            # Demand (building) thermal power - keyed by the BUILDING/demand node
+            # NAME, not by pipe code. Flat network-model RealInput
+            # "<name>Q_flow_input" (NOT "demand<name>.Q_flow_input").
+            # Default = PRESCRIBED demand setpoint [W].
+            "heat_power_prescribed": "networkModel.{name}Q_flow_input",
+            # Substation return temperature [K] as a BUILDING quantity (keyed by
+            # demand name), assigned to the node like the prescribed power. In the
+            # open-loop demand model the return is a fixed TReturn, so it is a
+            # building/substation quantity, not a network-node value from a pipe.
+            "temperature_return": "networkModel.demand{name}.senT_return.T",
+            # Optional realized-power reconstruction inputs (only pulled when
+            # realized=True): realized = m_flow * cp * (T_supply - T_return).
+            # No prebuilt realized-Q variable exists in the AixLib demand models.
+            "_realized": {
+                "T_supply": "networkModel.demand{name}.senT_supply.T",
+                "T_return": "networkModel.demand{name}.senT_return.T",
+                "m_flow": "networkModel.demand{name}.senT_supply.m_flow",
+            },
         }
     },
     "2.0.0": {
@@ -294,6 +315,16 @@ AIXLIB_MASKS = {
                 "port_a": "networkModel.pipe{pipe_code}{type}.sta_a.T",
                 "port_b": "networkModel.pipe{pipe_code}{type}.sta_b[1].T"
             }
+        },
+        "building": {
+            # See AIXLIB_MASKS["2.1.0"]["building"] for documentation.
+            "heat_power_prescribed": "networkModel.{name}Q_flow_input",
+            "temperature_return": "networkModel.demand{name}.senT_return.T",
+            "_realized": {
+                "T_supply": "networkModel.demand{name}.senT_supply.T",
+                "T_return": "networkModel.demand{name}.senT_return.T",
+                "m_flow": "networkModel.demand{name}.senT_supply.m_flow",
+            },
         }
     }
 }
@@ -342,7 +373,10 @@ def build_filter_list_pipe(graph, mask, logger=None):
     # Iterate through all categories in the mask
     for category_name, category_data in mask.items():
         if category_name not in ["edge", "node"]:
-            logger.warning(f"Unknown category '{category_name}' in mask, skipping")
+            # "building" is handled separately by build_filter_list_demand /
+            # assign_demand_power (keyed by building name, not pipe code).
+            if category_name != "building":
+                logger.warning(f"Unknown category '{category_name}' in mask, skipping")
             continue
             
         if category_name == "edge":
@@ -400,8 +434,55 @@ def build_filter_list_pipe(graph, mask, logger=None):
     
     logger.info(f"Created filter list with {len(filter_variables)} entries "
                f"for {len(graph.edges)} pipes")
-    
+
     return filter_variables
+
+
+def build_filter_list_demand(graph, MASK, realized=False, logger=None):
+    """Build the list of simulation columns for building (demand) thermal power.
+
+    Unlike build_filter_list_pipe, these variables are keyed by the BUILDING /
+    demand node NAME (networkModel.<name>Q_flow_input), not by pipe code. Supply
+    buildings are skipped (they have no demand input).
+
+    Args:
+        graph: uesgraphs object with a nodelist_building.
+        MASK: mask dict; the "building" section drives the patterns.
+        realized: if True, also request the sensor columns needed to reconstruct
+                  realized power (m_flow * cp * dT).
+        logger: optional logger.
+
+    Returns:
+        list[str]: column names; empty if MASK has no "building" section.
+    """
+    if logger is None:
+        logger = set_up_terminal_logger("BuildFilterListDemand")
+
+    bldg_mask = MASK.get("building")
+    if not bldg_mask:
+        logger.debug("No 'building' section in MASK; no demand-power columns.")
+        return []
+
+    pattern = bldg_mask["heat_power_prescribed"]
+    tret_pattern = bldg_mask.get("temperature_return")
+    realized_patterns = bldg_mask.get("_realized", {}) if realized else {}
+
+    columns = []
+    for node in graph.nodelist_building:
+        if graph.nodes[node].get("is_supply_heating"):
+            continue
+        name = graph.nodes[node].get("name")
+        if name is None:
+            continue
+        columns.append(pattern.format(name=name))
+        if tret_pattern:  # load the substation return-temp sensor too (always)
+            columns.append(tret_pattern.format(name=name))
+        for realized_pattern in realized_patterns.values():
+            columns.append(realized_pattern.format(name=name))
+
+    logger.info(f"Created demand-power filter list with {len(columns)} entries "
+                f"(realized={realized})")
+    return columns
 
 
 ##### Assign node values
@@ -515,7 +596,98 @@ def assign_edge_data(graph, MASK, df):
             pipe_name = graph.edges[edge]["name"]
             variable_name = variable_mask.format(pipe_code=pipe_name, type=type_suffix)
             graph.edges[edge][edge_variable] = df[variable_name]
-        
+
+
+def derive_specific_pressure_loss(graph):
+    """Computes dp_spec [Pa/m] = dp / length for each edge and stores it on the graph."""
+    for edge in graph.edges:
+        dp = graph.edges[edge]["dp"]
+        length = graph.edges[edge]["length"]
+        graph.edges[edge]["dp_spec"] = dp / length
+
+
+##### Assign building (demand) power
+
+CP_WATER_DEFAULT = 4184.0  # J/(kg*K), AixLib water default for realized-power reconstruction
+
+
+def assign_demand_power(graph, df, MASK, realized=False, cp=CP_WATER_DEFAULT, logger=None):
+    """Assign building thermal power onto demand nodes as a time series.
+
+    Writes graph.nodes[n]["heat_power_prescribed"] (pd.Series, W) for every
+    non-supply building node carrying a "name", read from the flat network-model
+    RealInput networkModel.<name>Q_flow_input. With realized=True, also writes
+    graph.nodes[n]["heat_power_realized"] = m_flow * cp * (T_supply - T_return),
+    reconstructed from the substation sensors (no prebuilt realized-Q variable
+    exists in the AixLib demand models).
+
+    Keyed by node["name"] (the demand-instance name), NOT by pipe code - which is
+    why the per-pipe assign_node_values cannot be reused here.
+
+    Args:
+        graph: uesgraphs object.
+        df: DataFrame with simulation columns (already time-indexed).
+        MASK: mask dict; the "building" section drives the patterns.
+        realized: also reconstruct realized delivered power.
+        cp: specific heat capacity [J/(kg*K)] for the realized reconstruction.
+        logger: optional logger.
+    """
+    if logger is None:
+        logger = set_up_terminal_logger(f"{__name__}.assign_demand_power")
+
+    bldg_mask = MASK.get("building")
+    if not bldg_mask:
+        logger.warning("No 'building' section in MASK; skipping demand power.")
+        return
+
+    pattern = bldg_mask["heat_power_prescribed"]
+    tret_pattern = bldg_mask.get("temperature_return")
+    realized_patterns = bldg_mask.get("_realized", {})
+    assigned = 0
+    tret_assigned = 0
+    realized_assigned = 0
+
+    for node in graph.nodelist_building:
+        if graph.nodes[node].get("is_supply_heating"):
+            continue
+        name = graph.nodes[node].get("name")
+        if name is None:
+            continue
+
+        column = pattern.format(name=name)
+        if column in df.columns:
+            graph.nodes[node]["heat_power_prescribed"] = df[column]
+            assigned += 1
+        else:
+            logger.debug(f"Prescribed power column not found for '{name}': {column}")
+
+        # Substation return temperature [K] -> building node (fixed TReturn in the
+        # open-loop model, so a building quantity rather than a pipe/node value).
+        if tret_pattern:
+            tcol = tret_pattern.format(name=name)
+            if tcol in df.columns:
+                graph.nodes[node]["temperature_return"] = df[tcol]
+                tret_assigned += 1
+            else:
+                logger.debug(f"Return-temp column not found for '{name}': {tcol}")
+
+        if realized and realized_patterns:
+            try:
+                t_supply = df[realized_patterns["T_supply"].format(name=name)]
+                t_return = df[realized_patterns["T_return"].format(name=name)]
+                m_flow = df[realized_patterns["m_flow"].format(name=name)]
+                graph.nodes[node]["heat_power_realized"] = m_flow * cp * (t_supply - t_return)
+                realized_assigned += 1
+            except KeyError as missing:
+                logger.debug(f"Realized power columns missing for '{name}': {missing}")
+
+    logger.info(f"Assigned prescribed demand power to {assigned} building nodes")
+    if tret_pattern:
+        logger.info(f"Assigned return temperature to {tret_assigned} building nodes")
+    if realized:
+        logger.info(f"Assigned realized demand power to {realized_assigned} building nodes")
+
+
 ##### Validation functions
 
 def validate_edge_attributes(graph, edge_attributes, reference_df, logger=None):
@@ -742,6 +914,8 @@ def assign_data_pipeline(
     aixlib_version: str = "2.1.0",
     system_model_path: Optional[Union[str, Path]] = None,
     node_to_port_mapping: Optional[Dict] = None,
+    with_demand_power: bool = True,
+    demand_power_realized: bool = False,
     logger: Optional[logging.Logger] = None
 ) -> ug.UESGraph:
     """
@@ -766,6 +940,11 @@ def assign_data_pipeline(
         aixlib_version: AixLib version for standard masks (default: "2.1.0")
         system_model_path: Path to system model JSON (for creating port mapping)
         node_to_port_mapping: Pre-computed mapping from nodes to simulation ports
+        with_demand_power: If True (default), also assign building thermal power to
+                      building nodes from the MASK "building" section (keyed by
+                      building name). Missing columns degrade to a warning.
+        demand_power_realized: If True, additionally reconstruct realized delivered
+                      power (m_flow*cp*dT) per substation from the sensor columns.
         logger: Logger instance. If None, creates a new file logger
         
     Returns:
@@ -892,7 +1071,27 @@ def assign_data_pipeline(
         # Build filter list for required variables
         filter_list = build_filter_list_pipe(graph, mask=MASK, logger=logger)
         logger.info(f"SUCCESS: Built filter list with {len(filter_list)} variables")
-        
+
+        # Add building (demand) power columns - keyed by building name, not pipe
+        # code. These may be absent (e.g. edge-only setups), so we intersect with
+        # the file's available columns and degrade missing ones to a warning
+        # instead of failing the strict validation below.
+        if with_demand_power:
+            demand_filter = build_filter_list_demand(
+                graph, MASK, realized=demand_power_realized, logger=logger)
+            if demand_filter:
+                available_columns = set(
+                    pq.ParquetFile(processed_simulation_path).schema.names)
+                present = [c for c in demand_filter if c in available_columns]
+                missing = [c for c in demand_filter if c not in available_columns]
+                if missing:
+                    logger.warning(
+                        f"WARNING: {len(missing)}/{len(demand_filter)} demand-power "
+                        f"columns not in data file; those buildings are skipped. "
+                        f"e.g. {missing[:3]}")
+                filter_list = filter_list + present
+                logger.info(f"SUCCESS: Added {len(present)} demand-power columns")
+
         # Validate that all required columns exist in the processed file
         column_validation = validate_columns_exist(
             file_path=processed_simulation_path, 
@@ -913,10 +1112,11 @@ def assign_data_pipeline(
         # Step 4: Prepare DataFrame
         logger.info("Step 4/6: Preparing time series data")
         df = prepare_DataFrame(
-            df, 
-            start_date=start_date, 
+            df,
+            base_date=start_date,
+            start_date=start_date,
             end_date=end_date,
-            time_interval=time_interval, 
+            time_interval=time_interval,
             logger=logger
         )
         logger.info(f"SUCCESS: Prepared DataFrame: {df.shape[0]} timesteps after filtering")
@@ -929,9 +1129,15 @@ def assign_data_pipeline(
             assign_node_values(graph, df, port_mapping, MASK, logger=logger)
             logger.info(f"SUCCESS: Assigned node data (temperature, pressure) to {len(graph.nodes)} nodes")
         
-        # Assign values to edges (mass flow, pressure drop) - always done
+        # Assign values to edges (mass flow, pressure drop, velocity) - always done
         assign_edge_data(graph, MASK, df)
-        logger.info(f"SUCCESS: Assigned edge data (mass flow, pressure drop) to {len(graph.edges)} edges")
+        derive_specific_pressure_loss(graph)
+        logger.info(f"SUCCESS: Assigned edge data (m_flow, dp, velocity, dp_spec) to {len(graph.edges)} edges")
+
+        # Assign building (demand) power to building nodes (keyed by building name)
+        if with_demand_power:
+            assign_demand_power(graph, df, MASK,
+                                realized=demand_power_realized, logger=logger)
         
         # Step 6: Validate results
         logger.info("Step 6/6: Validating assignment results")

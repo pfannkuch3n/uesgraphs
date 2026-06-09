@@ -309,6 +309,22 @@ class Visuals(object):
         minmaxmtempdrop = False,
         generic_intensive_size=None,
         generic_extensive_size=None,
+        generic_node_size=None,
+        generic_node_color=None,
+        node_size_min=10,
+        node_size_max=120,
+        node_minmax=None,
+        generic_node_ring=None,
+        ring_size_min=60,
+        ring_size_max=600,
+        ring_width=1.5,
+        ring_color="#222222",
+        ring_alpha=0.9,
+        ring_minmax=None,
+        ring_legend=False,
+        ring_legend_scale=1.0,
+        ring_legend_unit="",
+        ring_legend_title=None,
         minmax = False,
         zero_alpha = 1,
         cmap = "viridis",
@@ -518,6 +534,67 @@ class Visuals(object):
                 if draw is not None:
                     draw.set_edgecolor("purple")
 
+        # --- Generic building-node size/color from a SCALAR node attribute ---
+        # Normalize over BUILDINGS only: get_min_max(mode="node") would raise a
+        # KeyError on street/heat nodes that lack the attribute. Series attributes
+        # are rejected here - reduce them to a scalar first (analyze.snapshot_at).
+        def _node_norm(key):
+            if key is None:
+                return None
+            if node_minmax not in (None, False):
+                lo, hi = node_minmax
+            else:
+                vals = [self.uesgraph.nodes[b][key]
+                        for b in self.uesgraph.nodelist_building
+                        if key in self.uesgraph.nodes[b]]
+                if not vals:
+                    raise KeyError(
+                        f"No building carries attribute '{key}'. Assign it "
+                        f"(e.g. analyze.assign_demand_power) and reduce to a "
+                        f"scalar (e.g. analyze.snapshot_at) first.")
+                for v in vals:
+                    if hasattr(v, "__len__"):
+                        raise TypeError(
+                            f"Building attribute '{key}' is a Series, not a "
+                            f"scalar. Reduce first, e.g. "
+                            f"analyze.snapshot_at(graph, t, node_keys=['{key}']).")
+                lo, hi = min(vals), max(vals)
+            if hi == lo:
+                hi = lo + 1.0
+            return Normalize(lo, hi)
+
+        node_size_norm = _node_norm(generic_node_size)
+        node_color_norm = _node_norm(generic_node_color)
+
+        # Halo-ring (secondary overlay): radius ~ value, ANCHORED AT 0 so a value
+        # of 0 -> no ring (distinguishes "no demand" from "small demand"). Only the
+        # upper bound matters; normalize over buildings (not get_min_max).
+        ring_vmax = None
+        ring_vmin = 0.0   # smallest POSITIVE demand (lower legend reference)
+        if generic_node_ring is not None:
+            if ring_minmax not in (None, False):
+                ring_vmin, ring_vmax = ring_minmax[0], ring_minmax[1]
+            else:
+                _rvals = [self.uesgraph.nodes[b][generic_node_ring]
+                          for b in self.uesgraph.nodelist_building
+                          if generic_node_ring in self.uesgraph.nodes[b]]
+                if not _rvals:
+                    raise KeyError(
+                        f"No building carries attribute '{generic_node_ring}'. Assign "
+                        f"it (e.g. analyze.assign_demand_power) and reduce to a scalar "
+                        f"(e.g. analyze.snapshot_at) first.")
+                for _v in _rvals:
+                    if hasattr(_v, "__len__"):
+                        raise TypeError(
+                            f"Building attribute '{generic_node_ring}' is a Series, not "
+                            f"a scalar. Reduce first, e.g. "
+                            f"analyze.snapshot_at(graph, t, node_keys=['{generic_node_ring}']).")
+                ring_vmax = max(_rvals)
+                _pos = [_v for _v in _rvals if _v > 0]
+                ring_vmin = min(_pos) if _pos else 0.0
+            if ring_vmax is None or ring_vmax <= 0:
+                ring_vmax = 1.0
+
         for building in self.uesgraph.nodelist_building:
             if self.uesgraph.node[building]["position"] is not None:
                 if self.uesgraph.node[building]["is_supply_heating"] is True:
@@ -595,16 +672,51 @@ class Visuals(object):
                         draw.set_edgecolor("gray")
                         
                     
-                # color light black
+                # color light black (default) OR power-encoded building dot
+                node_size = 25 * scaling_factor
+                node_color = "#2B2B2B"
+                node_cmap = None
+                node_vmin = node_vmax = None
+                if (generic_node_size is not None
+                        and generic_node_size in self.uesgraph.nodes[building]):
+                    n = float(node_size_norm(
+                        self.uesgraph.nodes[building][generic_node_size]))
+                    # matplotlib s= is marker AREA -> interpolate area linearly
+                    # (radius ~ sqrt): the proportional-symbol convention.
+                    node_size = (node_size_min
+                                 + n * (node_size_max - node_size_min)) * scaling_factor
+                if (generic_node_color is not None
+                        and generic_node_color in self.uesgraph.nodes[building]):
+                    node_color = [self.uesgraph.nodes[building][generic_node_color]]
+                    node_cmap = plt.get_cmap(cmap)
+                    node_vmin, node_vmax = node_color_norm.vmin, node_color_norm.vmax
                 draw = nx.draw_networkx_nodes(
                     self.uesgraph,
                     pos=self.uesgraph.positions,
                     nodelist=[building],
-                    node_size=25 * scaling_factor,
-                    node_color="#2B2B2B",
+                    node_size=node_size,
+                    node_color=node_color,
+                    cmap=node_cmap,
+                    vmin=node_vmin,
+                    vmax=node_vmax,
                     linewidths=None,
                     alpha=0.7,
                 )
+                # Halo-ring (secondary demand overlay): hollow circle, radius ~ value
+                # anchored at 0 -> value 0 draws nothing ("no demand" stays visible).
+                if (generic_node_ring is not None
+                        and generic_node_ring in self.uesgraph.nodes[building]):
+                    _rv = float(self.uesgraph.nodes[building][generic_node_ring])
+                    if _rv > 0:   # value 0 -> NO ring (distinguishes "no demand")
+                        # Offset by ring_size_min so the smallest ring is a visible
+                        # halo OUTSIDE the base node dot (which is ~25*scaling_factor),
+                        # then grow by area up to ring_size_max at ring_vmax.
+                        _span = max(ring_size_max - ring_size_min, 0.0)
+                        _area = (ring_size_min + (_rv / ring_vmax) * _span) * scaling_factor
+                        _rpos = self.uesgraph.node[building]["position"]
+                        ax.scatter(_rpos.x, _rpos.y, s=_area, facecolors="none",
+                                   edgecolors=ring_color, linewidths=ring_width,
+                                   alpha=ring_alpha, zorder=5)
                 # Get the name of the building
                 building_name = self.uesgraph.node[building]["name"]
                 
@@ -669,6 +781,24 @@ class Visuals(object):
                     )
                     if draw is not None:
                         draw.set_edgecolor("purple")
+
+        # Optional discrete size legend for the demand ring (min / mid / max demand;
+        # marker sizes match the draw formula, labels in ring_legend_unit).
+        if generic_node_ring is not None and ring_legend and ring_vmax:
+            _span = max(ring_size_max - ring_size_min, 0.0)
+            _refs = sorted({_v for _v in (ring_vmin,
+                                          (ring_vmin + ring_vmax) / 2.0,
+                                          ring_vmax) if _v and _v > 0})
+            _ring_handles = []
+            for _v in _refs:
+                _area = (ring_size_min + (_v / ring_vmax) * _span) * scaling_factor
+                _lab = f"{_v * ring_legend_scale:,.0f} {ring_legend_unit}".strip()
+                _ring_handles.append(mlines.Line2D(
+                    [], [], marker="o", linestyle="None", markerfacecolor="none",
+                    markeredgecolor=ring_color, markersize=_area ** 0.5, label=_lab))
+            ax.legend(handles=_ring_handles,
+                      title=(ring_legend_title or generic_node_ring),
+                      loc="lower left", labelspacing=2.2, frameon=True, borderpad=1.2)
 
         #Lets draw some edges!
         for edge in self.uesgraph.edges():
@@ -998,6 +1128,23 @@ class Visuals(object):
         timestamp = False,
         generic_intensive_size=None,
         generic_extensive_size=None,
+        generic_node_size=None,
+        generic_node_color=None,
+        node_size_min=10,
+        node_size_max=120,
+        node_minmax=None,
+        node_ylabel=None,
+        generic_node_ring=None,
+        ring_size_min=60,
+        ring_size_max=600,
+        ring_width=1.5,
+        ring_color="#222222",
+        ring_alpha=0.9,
+        ring_minmax=None,
+        ring_legend=False,
+        ring_legend_scale=1.0,
+        ring_legend_unit="",
+        ring_legend_title=None,
         minmax = None,
         ylabel = None,
         zero_alpha = 1,
@@ -1087,9 +1234,60 @@ class Visuals(object):
             of paint_edges_extensive_sizes for more information
         cmap : str, optional
             Name of the colormap to use for visualization (default='viridis').
-            Common options include 'viridis', 'coolwarm', 'RdYlGn', 'plasma', 
-            'Blues'. For temperature data, 'coolwarm' or 'RdYlGn' provide 
+            Common options include 'viridis', 'coolwarm', 'RdYlGn', 'plasma',
+            'Blues'. For temperature data, 'coolwarm' or 'RdYlGn' provide
             intuitive red=hot, blue=cold color semantics.
+        generic_node_size : str, optional
+            Node attribute name. If set, building-node marker AREA is scaled by
+            this SCALAR attribute (normalized over building nodes only). Reduce
+            time series to a scalar first (see uesgraphs.analyze.snapshot_at).
+        generic_node_color : str, optional
+            Node attribute name. If set, building nodes are colored by this scalar
+            attribute and a colorbar is added (label via node_ylabel).
+        node_size_min : float
+            Marker AREA (before scaling_factor) mapped to the normalized minimum
+            of generic_node_size. Default 10.
+        node_size_max : float
+            Marker AREA (before scaling_factor) mapped to the normalized maximum
+            of generic_node_size. Default 120.
+        node_minmax : array, optional
+            [min, max] override for node size/color normalization. By default
+            computed over building nodes only.
+        node_ylabel : str, optional
+            Colorbar label for generic_node_color.
+        generic_node_ring : str, optional
+            Node attribute name for a SECONDARY demand overlay drawn as a hollow
+            ring (halo) around building nodes. Ring area is proportional to the
+            scalar value, anchored at 0, so value 0 draws no ring ("no demand" is
+            immediately visible). Stays subordinate to the primary edge/node
+            encoding and needs no colorbar. Reduce time series to a scalar first
+            (see uesgraphs.analyze.snapshot_at).
+        ring_size_min : float
+            Marker AREA (before scaling_factor) of the SMALLEST non-zero ring. Set
+            above the base node-dot area (~25*scaling_factor) so any building with
+            demand > 0 shows a halo OUTSIDE the dot. Default 60.
+        ring_size_max : float
+            Marker AREA (before scaling_factor) of the ring at the data maximum
+            (or ring_minmax[1]). Default 600.
+        ring_width : float
+            Ring line width. Default 1.5.
+        ring_color : str
+            Ring edge color. Default '#222222'.
+        ring_alpha : float
+            Ring transparency. Default 0.9.
+        ring_minmax : array, optional
+            [min, max] override for the ring scaling. By default both are taken over
+            buildings (max = largest demand; min = smallest non-zero demand, used as
+            the lower legend reference). Drawing is always offset by ring_size_min.
+        ring_legend : bool
+            If True, add a discrete size legend with reference rings at the min, mid
+            and max demand (marker sizes match the drawn rings).
+        ring_legend_scale : float
+            Multiplier applied to legend values (e.g. 1e-3 for W -> kW). Default 1.0.
+        ring_legend_unit : str
+            Unit string appended to legend labels (e.g. 'kW'). Default ''.
+        ring_legend_title : str, optional
+            Title of the ring legend. Defaults to the attribute name.
 
         Returns
         -------
@@ -1139,7 +1337,7 @@ class Visuals(object):
         elif add_temperature_drop is True:
             gs = gridspec.GridSpec(1, 2, width_ratios=[20, 1])
             ax = plt.subplot(gs[0])
-        elif ylabel is not None: #Added for generic sizes in september 2024
+        elif ylabel is not None or generic_node_color is not None: #generic sizes / node color
             gs = gridspec.GridSpec(1, 2, width_ratios=[20, 1])
             ax = plt.subplot(gs[0])
         else:
@@ -1177,6 +1375,22 @@ class Visuals(object):
                 minmaxmtempdrop=minmaxmtempdrop,
                 generic_intensive_size=generic_intensive_size,
                 generic_extensive_size=generic_extensive_size,
+                generic_node_size=generic_node_size,
+                generic_node_color=generic_node_color,
+                node_size_min=node_size_min,
+                node_size_max=node_size_max,
+                node_minmax=node_minmax,
+                generic_node_ring=generic_node_ring,
+                ring_size_min=ring_size_min,
+                ring_size_max=ring_size_max,
+                ring_width=ring_width,
+                ring_color=ring_color,
+                ring_alpha=ring_alpha,
+                ring_minmax=ring_minmax,
+                ring_legend=ring_legend,
+                ring_legend_scale=ring_legend_scale,
+                ring_legend_unit=ring_legend_unit,
+                ring_legend_title=ring_legend_title,
                 minmax=minmax,
                 zero_alpha=zero_alpha,
                 cmap=cmap,
@@ -1206,14 +1420,23 @@ class Visuals(object):
         # then we assign a ylabel. Magic happens in _add_color_scale()
         self.logger.debug(f"ylabel: {ylabel}")
         cond = True
-        if ylabel is not None:
-            ylabel = ylabel #ylabel for generic sizes
+        if ylabel is not None or generic_node_color is not None:
+            if ylabel is None:
+                ylabel = node_ylabel #colorbar label for node coloring
             self.logger.debug(f"ylabel: {ylabel}")
             if minmax is False or minmax is None:
                 if generic_intensive_size is not None:
                     minmax = self.uesgraph.get_min_max(key= generic_intensive_size, mode = "node")
-                else:
+                elif generic_extensive_size is not None:
                     minmax = self.uesgraph.get_min_max(key= generic_extensive_size, mode = "edge")
+                elif generic_node_color is not None:
+                    if node_minmax not in (None, False):
+                        minmax = node_minmax
+                    else:
+                        vals = [self.uesgraph.nodes[b][generic_node_color]
+                                for b in self.uesgraph.nodelist_building
+                                if generic_node_color in self.uesgraph.nodes[b]]
+                        minmax = [min(vals), max(vals)]
                 self.logger.debug(minmax)
         elif show_mass_flows:
             minmax = minmaxmflow
@@ -1617,7 +1840,7 @@ class Visuals(object):
 
         # Add layer for heating networks
         if "all" in networks or "heating" in networks:
-            if len(heating_graphs[list(heating_graphs.keys())[0]].nodes()) > 0:
+            if heating_graphs and len(heating_graphs[list(heating_graphs.keys())[0]].nodes()) > 0:
                 ax = self._add_network_layer_3d(
                     ax,
                     "heating",
@@ -1629,7 +1852,7 @@ class Visuals(object):
 
         # Add layer for cooling networks
         if "all" in networks or "cooling" in networks:
-            if len(cooling_graphs[list(cooling_graphs.keys())[0]].nodes()) > 0:
+            if cooling_graphs and len(cooling_graphs[list(cooling_graphs.keys())[0]].nodes()) > 0:
                 ax = self._add_network_layer_3d(
                     ax,
                     "cooling",

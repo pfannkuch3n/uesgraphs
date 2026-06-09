@@ -29,10 +29,18 @@ graph_with_data = assign_data_pipeline(
 # Main pipeline function
 from .data_handling.data_handling import (
     assign_data_pipeline,
+    assign_demand_power,
     process_simulation_result,
     prepare_DataFrame,
     set_up_terminal_logger,
     set_up_file_logger,
+)
+
+# Temporal reduction of time-series attributes (series -> scalar for plotting)
+from .temporal import (
+    snapshot_at,
+    value_range,
+    abs_attr,
 )
 
 # MAT file handling
@@ -51,7 +59,11 @@ from .data_handling.graph_transformation import (
 # Public API - main functions users need
 __all__ = [
     "assign_data_pipeline",
-    "process_simulation_result", 
+    "assign_demand_power",
+    "snapshot_at",
+    "value_range",
+    "abs_attr",
+    "process_simulation_result",
     "prepare_DataFrame",
     "loadsim",
     "mat_to_pandas",

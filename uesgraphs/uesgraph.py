@@ -1424,8 +1424,9 @@ class UESGraph(nx.Graph):
             Path to buildings GeoJSON file containing Point or Polygon geometries.
             Must include 'name' property for each building.
         supply_path : str
-            Path to supply points GeoJSON file containing Point geometries.
-            Must include 'name' property. Points must coincide with network nodes.
+            Path to supply points GeoJSON file containing Point or Polygon geometries.
+            Must include 'name' property. Points must coincide with network nodes;
+            for Polygons, any enclosed network node is used.
         name : str
             Name identifier for this network model
         save_path : str, optional
@@ -1479,7 +1480,7 @@ class UESGraph(nx.Graph):
             self._create_network_visualization(folder_vis, filename="1_basic_uesgraph")
         
         # Process supply points
-        self._process_supply_points_from_geojson(supply_path)
+        self._process_supply_points_from_geojson(supply_path, tolerance=tolerance)
     
         if folder_vis: # Generate visualization
             self._create_network_visualization(folder_vis, filename="2_with_supply",labels="heat")
@@ -1646,39 +1647,43 @@ class UESGraph(nx.Graph):
                 dIns=0.1,
             )
 
-    def _process_supply_points_from_geojson(self, supply_path):
+    def _process_supply_points_from_geojson(self, supply_path, tolerance=1e-8):
         """
         Process supply points and add them as building nodes with heating supply.
-        
+
         Finds network nodes at supply point locations and replaces them with
         building nodes marked as is_supply_heating=True. Supply points that
         don't match any network node are skipped with a warning.
-        
+
         Parameters
         ----------
         supply_path : str
-            Path to supply points GeoJSON file (Point geometries)
-            
+            Path to supply points GeoJSON file (Point or Polygon geometries)
+        tolerance : float, default 1e-8
+            Distance tolerance in degrees for Point-to-Point matching
+
         Notes
         -----
-        Supply point coordinates must exactly match an existing network node
-        position (within 1e-6 resolution).
+        For Point geometries: supply point must coincide with a network node
+        (within tolerance). For Polygon geometries: any network node within
+        the polygon is used.
         """
 
         supply_df = gp.read_file(supply_path)
-        
+
         for _, row in supply_df.iterrows():
             name_supply = row["name"]
-            pos_supply = row["geometry"]
-            
-            # Find node at supply position
-            repl_node = next(iter(self.get_node_by_position(pos_supply)), None)
-            
+            geometry = row["geometry"]
+
+            # Find node at supply position (supports Point and Polygon)
+            repl_node = self.__find_node_in_polygon(geometry, tolerance=tolerance)
+
             if repl_node:
+                position = self.nodes[repl_node]["position"]
                 # Add building marked as supply
                 self.add_building(
                     name=name_supply,
-                    position=pos_supply,
+                    position=position,
                     is_supply_heating=True,
                     replaced_node=repl_node,
                 )
