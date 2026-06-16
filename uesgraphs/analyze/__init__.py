@@ -43,6 +43,11 @@ from .temporal import (
     abs_attr,
 )
 
+# Network-level temperature KPIs (couple per-substation series across the graph)
+from .temperatures import (
+    return_temp_reduction_potential,
+)
+
 # MAT file handling
 from .data_handling.mat_handler import (
     loadsim,
@@ -63,6 +68,7 @@ __all__ = [
     "snapshot_at",
     "value_range",
     "abs_attr",
+    "return_temp_reduction_potential",
     "process_simulation_result",
     "prepare_DataFrame",
     "loadsim",

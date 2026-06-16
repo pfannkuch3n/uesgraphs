@@ -7,9 +7,15 @@ import os
 from pathlib import Path
 from datetime import datetime
 
+import pandas as pd
+from shapely.geometry import Point
+
 import uesgraphs as ug
 from uesgraphs.analyze.data_handling.data_handling import check_input_file
 import uesgraphs.analyze as analyze
+from uesgraphs.analyze import return_temp_reduction_potential
+
+_K0 = 273.15
 
 
 class TestAnalyzeDataHandling:
@@ -105,3 +111,67 @@ class TestAnalyzeDataHandling:
                 assert len(pressure_data) > 0, "pressure should contain data points"
         
         assert nodes_with_data > 0, "At least some nodes should have pressure data"
+
+
+def _toy_network():
+    """Supply + 1 junction + 2 substations (b1, b2) with known 2-step series.
+
+    target = 55 degC; deficits (degC): b1 = [5, -5], b2 = [15, 15];
+    connection mass flows (kg/s): b1 = [2, 2], b2 = [2, 6].
+    """
+    graph = ug.UESGraph()
+    supply = graph.add_building(name="supply", position=Point(0, 0),
+                                is_supply_heating=True)
+    junction = graph.add_network_node("heating", name="j", position=Point(1, 0))
+    b1 = graph.add_building(name="b1", position=Point(2, 1))
+    b2 = graph.add_building(name="b2", position=Point(2, -1))
+    graph.add_edge(supply, junction)
+    e1, e2 = (junction, b1), (junction, b2)
+    graph.add_edge(*e1)
+    graph.add_edge(*e2)
+
+    idx = pd.date_range("2024-01-01", periods=2, freq="h")
+    graph.nodes[b1]["temperature_return"] = pd.Series([60 + _K0, 50 + _K0], index=idx)
+    graph.nodes[b2]["temperature_return"] = pd.Series([70 + _K0, 70 + _K0], index=idx)
+    graph.edges[e1]["m_flow"] = pd.Series([2.0, 2.0], index=idx)
+    graph.edges[e2]["m_flow"] = pd.Series([2.0, 6.0], index=idx)
+    return graph
+
+
+class TestReturnTempReductionPotential:
+    """Eq. 13 (Oltmanns 2020) on a hand-computable toy network."""
+
+    def test_clamped_potential_matches_hand_calc(self):
+        df = return_temp_reduction_potential(_toy_network(), target_temp=55)
+
+        # b2: mean(15*2/4, 15*6/8) = mean(7.5, 11.25) = 9.375
+        # b1: mean(5*2/4, max(0,-5)*2/8) = mean(2.5, 0) = 1.25  (clamp kills step 2)
+        assert df.loc["b2", "potential_K"] == pytest.approx(9.375)
+        assert df.loc["b1", "potential_K"] == pytest.approx(1.25)
+        assert df.attrs["network_total_K"] == pytest.approx(10.625)
+
+        # Sorted descending -> highest-leverage substation first.
+        assert list(df.index) == ["b2", "b1"]
+
+        # Context columns and bookkeeping.
+        assert df.loc["b1", "mean_return_C"] == pytest.approx(55.0)
+        assert df.loc["b2", "mean_mflow_kgs"] == pytest.approx(4.0)
+        assert df["mean_share"].sum() == pytest.approx(1.0)  # no skipped substations
+        assert df.attrs["n_steps_used"] == 2
+        assert df.attrs["n_substations"] == 2
+        assert df.attrs["n_skipped"] == 0
+
+    def test_no_clamp_keeps_signed_deficit(self):
+        df = return_temp_reduction_potential(_toy_network(), target_temp=55,
+                                             clamp=False)
+        # b1 step 2 now contributes -5 * 2/8 = -1.25 -> mean(2.5, -1.25) = 0.625
+        assert df.loc["b1", "potential_K"] == pytest.approx(0.625)
+        assert df.loc["b2", "potential_K"] == pytest.approx(9.375)
+
+    def test_target_in_kelvin_equivalent(self):
+        df_c = return_temp_reduction_potential(_toy_network(), target_temp=55)
+        df_k = return_temp_reduction_potential(_toy_network(),
+                                               target_temp=55 + _K0,
+                                               target_in_celsius=False)
+        assert df_k.loc["b2", "potential_K"] == pytest.approx(
+            df_c.loc["b2", "potential_K"])
