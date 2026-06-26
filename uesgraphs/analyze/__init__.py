@@ -32,9 +32,15 @@ from .data_handling.data_handling import (
     assign_demand_power,
     process_simulation_result,
     prepare_DataFrame,
+    check_input_file,
+    mask_keep_suffixes,
     set_up_terminal_logger,
     set_up_file_logger,
 )
+
+# Pre-convert .mat -> parquet cache: import from uesgraphs.analyze.convert
+# (kept out of this package __init__ so `python -m uesgraphs.analyze.convert`
+# does not trigger a double-import RuntimeWarning).
 
 # Temporal reduction of time-series attributes (series -> scalar for plotting)
 from .temporal import (
@@ -46,6 +52,11 @@ from .temporal import (
 # Network-level temperature KPIs (couple per-substation series across the graph)
 from .temperatures import (
     return_temp_reduction_potential,
+)
+
+# Pump power vs. heat loss energy comparison (series -> scalar reduction)
+from .energy import (
+    pump_vs_loss,
 )
 
 # MAT file handling
@@ -69,8 +80,11 @@ __all__ = [
     "value_range",
     "abs_attr",
     "return_temp_reduction_potential",
+    "pump_vs_loss",
     "process_simulation_result",
     "prepare_DataFrame",
+    "check_input_file",
+    "mask_keep_suffixes",
     "loadsim",
     "mat_to_pandas",
     "mat_to_parquet",

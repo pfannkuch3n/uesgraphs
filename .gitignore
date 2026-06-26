@@ -25,3 +25,7 @@ result_images/
 #####################
 docs/source/_autosummary/
 
+# Generated analysis caches (.mat -> .parquet via uesgraphs.analyze.convert) #
+#####################
+*.parquet
+

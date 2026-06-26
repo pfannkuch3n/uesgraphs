@@ -15,7 +15,7 @@ from datetime import datetime
 import uesgraphs as ug
 from uesgraphs.systemmodels import utilities as ut
 from uesgraphs.analyze.data_handling import graph_transformation
-from uesgraphs.analyze.data_handling.mat_handler import mat_to_parquet
+from uesgraphs.analyze.data_handling.mat_handler import mat_to_parquet, keep_fingerprint
 from uesgraphs.utilities import set_up_terminal_logger, set_up_file_logger
 
 
@@ -26,20 +26,44 @@ AIXLIB_MASKS = None  # Dictionary to store masks for column names
 
 #### Functions 2: Data Aquisition ####
 
-def check_input_file(file_path: str, logger=None) -> str:
+def _read_keep_marker(parquet_path: str):
+    """The ``ues_keep`` kept-column fingerprint stored in a parquet cache, or None
+    if absent/unreadable (legacy cache or non-parquet)."""
+    try:
+        meta = pq.ParquetFile(parquet_path).schema_arrow.metadata or {}
+    except Exception:
+        return None
+    val = meta.get(b"ues_keep")
+    return val.decode() if val is not None else None
+
+
+def check_input_file(file_path: str, logger=None, force_reconvert: bool = False,
+                     convert_kwargs: Optional[dict] = None) -> str:
     """
-    Check and prepare input file for processing.
-    
-    Handles different file formats and converts .mat files to .gzip if needed.
-    
+    Check and prepare an input file for processing.
+
+    Resolves the parquet cache for a Dymola ``.mat`` result, converting on demand.
+    Resolution order (so a present ``.mat`` always yields a current cache):
+
+    1. a fresh ``<base>.parquet`` (newer than the ``.mat``)      -> use it
+    2. a ``.mat``                                                -> (re)convert to ``<base>.parquet``
+    3. an existing cache with no ``.mat`` to rebuild from        -> read it (incl. legacy ``.gzip``)
+    4. the original file                                         -> use as-is
+
     Args:
-        file_path: Path to the input file
-        
+        file_path: Path to the input file (typically the ``.mat``).
+        logger: optional logger.
+        force_reconvert: skip step 1 and rebuild from the ``.mat``. Used by the
+            self-heal path when a required column is absent from a fast cache.
+        convert_kwargs: kwargs forwarded to :func:`mat_to_parquet` (e.g.
+            ``{"keep_suffixes": (...)}``). Defaults to the project scope
+            (:data:`DEFAULT_CACHE_SCOPE`).
+
     Returns:
-        Path to the processed file (usually .gzip format)
-        
+        Path to the file to read (usually ``<base>.parquet``).
+
     Raises:
-        ValueError: If file doesn't exist or conversion fails
+        ValueError: If file doesn't exist or conversion fails.
     """
     if logger is None:
         logger = set_up_terminal_logger(f"{__name__}.check_input_file")
@@ -47,30 +71,66 @@ def check_input_file(file_path: str, logger=None) -> str:
     if not file_path:
         raise ValueError("File path cannot be empty")
 
-    base_path = os.path.splitext(file_path)[0]
-    gzip_path = f"{base_path}.gzip"
+    if convert_kwargs is None:
+        convert_kwargs = _default_convert_kwargs()
 
-    # Check for gzip first (preferred format)
-    if os.path.exists(gzip_path):
-        logger.info(f"Found existing gzip file: {gzip_path}")
-        return gzip_path
-    
-    # Check for .mat file and convert
+    base_path = os.path.splitext(file_path)[0]
+    parquet_path = f"{base_path}.parquet"
+    gzip_legacy = f"{base_path}.gzip"
     mat_path = f"{base_path}.mat"
+
+    def _fresh(cache: str) -> bool:
+        # Valid if there is no .mat to compare against, or the cache is newer.
+        return (not os.path.exists(mat_path)
+                or os.path.getmtime(cache) >= os.path.getmtime(mat_path))
+
+    def _keep_ok(cache: str) -> bool:
+        """Whether *cache* was built with the column set we now expect. Only
+        actionable when a .mat exists (otherwise we cannot rebuild, so keep it).
+        A cache predating the fingerprint is rebuilt for a fast expectation so it
+        picks up columns added to the masks later; a full cache already has all."""
+        if not os.path.exists(mat_path):
+            return True
+        expected = keep_fingerprint(convert_kwargs.get("keep_suffixes"))
+        actual = _read_keep_marker(cache)
+        if actual is None:
+            return expected == "full"
+        return actual == expected
+
+    # 1) Fresh new-format cache, built with the column set we now expect.
+    if not force_reconvert and os.path.exists(parquet_path) and _fresh(parquet_path):
+        if _keep_ok(parquet_path):
+            logger.info(f"Using parquet cache: {parquet_path}")
+            return parquet_path
+        logger.info("Parquet cache kept-column set is stale (masks changed) -> "
+                    "rebuilding once from .mat")
+
+    # 2) (Re)convert from .mat. Also migrates legacy gzip-only setups to parquet
+    #    and refreshes a stale cache after a re-simulation (mtime check above).
     if os.path.exists(mat_path):
         try:
             logger.info(f"Converting .mat file to parquet: {mat_path}")
-            gzip_new = mat_to_parquet(save_as=base_path, fname=mat_path, with_unit=False)
-            logger.info(f"Successfully converted .mat file to: {gzip_new}")
-            return gzip_new
+            out = mat_to_parquet(save_as=base_path, fname=mat_path,
+                                 with_unit=False, **convert_kwargs)
+            logger.info(f"Successfully converted .mat file to: {out}")
+            return out
         except Exception as e:
             logger.error(f"Failed to convert .mat file: {mat_path}")
             raise ValueError(f"Could not convert .mat file to parquet: {mat_path}") from e
-    
-    # Finally check if original file exists
+
+    # 3) An existing cache, when there is no .mat to rebuild from (e.g. archived
+    #    result). New format wins; legacy .gzip stays readable.
+    if os.path.exists(parquet_path):
+        logger.info(f"Using parquet cache (no .mat to refresh): {parquet_path}")
+        return parquet_path
+    if os.path.exists(gzip_legacy):
+        logger.info(f"Using legacy .gzip cache (no .mat to refresh): {gzip_legacy}")
+        return gzip_legacy
+
+    # 4) Original file.
     if not os.path.exists(file_path):
         raise ValueError(f"File does not exist: {file_path}")
-    
+
     logger.info(f"Using original file: {file_path}")
     return file_path
 
@@ -279,6 +339,22 @@ AIXLIB_MASKS = {
                 "port_b": "networkModel.pipe{pipe_code}{type}.sta_b.T"
             }
         },
+        "edge_optional": {
+            # OPTIONAL per-pipe heat loss to the surroundings: the pipe model's
+            # OWN loss term (heatPort is connected to TGround in the generated
+            # network), in W with >0 = loss. Kept SEPARATE from the required
+            # "edge" block so a data file WITHOUT heatPort logging degrades to a
+            # warning instead of raising (see assign_data_pipeline /
+            # assign_edge_loss). heatPort is exposed top-level by every DHC pipe
+            # wrapper (DHCPipe, PlugFlowPipe*, StaticPipe).
+            "Q_loss": "networkModel.pipe{pipe_code}{type}.heatPort.Q_flow",
+            # Return-line pipe loss (literal "R", no {type}): so a SUPPLY-side
+            # graph also carries the return pipe loss, and the per-pipe total in
+            # pump_vs_loss covers BOTH lines (VL+RL). Only mapped on a supply
+            # graph (skipped when the graph itself is the return side, to avoid
+            # double counting) - see assign_edge_loss.
+            "Q_loss_return": "networkModel.pipe{pipe_code}R.heatPort.Q_flow",
+        },
         "building": {
             # Demand (building) thermal power - keyed by the BUILDING/demand node
             # NAME, not by pipe code. Flat network-model RealInput
@@ -316,6 +392,11 @@ AIXLIB_MASKS = {
                 "port_b": "networkModel.pipe{pipe_code}{type}.sta_b[1].T"
             }
         },
+        "edge_optional": {
+            # See AIXLIB_MASKS["2.1.0"]["edge_optional"] for documentation.
+            "Q_loss": "networkModel.pipe{pipe_code}{type}.heatPort.Q_flow",
+            "Q_loss_return": "networkModel.pipe{pipe_code}R.heatPort.Q_flow",
+        },
         "building": {
             # See AIXLIB_MASKS["2.1.0"]["building"] for documentation.
             "heat_power_prescribed": "networkModel.{name}Q_flow_input",
@@ -328,6 +409,107 @@ AIXLIB_MASKS = {
         }
     }
 }
+
+
+# --------------------------------------------------------------------------
+# Supply-station masks: EXCHANGEABLE per supply model
+# --------------------------------------------------------------------------
+# The supply station is swappable (open-loop ideal today, closed-loop or a model
+# with a real pump later). Different stations expose different variable names AND
+# a different pump-power semantics, so the supply mask must NOT be hard-wired.
+#
+# Keyed by the supply *model* name (the ``comp_model`` the model generator uses).
+# assign_data_pipeline auto-selects the entry per supply node from the system
+# model's ``comp_model`` (falling back to the ``supply_model`` argument). Add a
+# new station = add a new entry here.
+#
+# Each entry:
+#   "vars":       attribute -> Modelica column template (keyed by supply NAME).
+#   "pump_power": how to obtain pump power:
+#       {"mode": "hydraulic"}            -> reconstruct ideal hydraulic power
+#                                           P = |m_flow|/rho * (p_flow - p_return)
+#                                           (ideal pressure source, no efficiency)
+#       {"mode": "native", "var": "..."} -> read a logged pump-power variable
+#                                           directly (real-pump models).
+SUPPLY_MASKS = {
+    # AixLib.Fluid.DistrictHeatingCooling.Supplies.OpenLoop.SourceIdeal:
+    # ideal Boundary_pT pressure source + sink, NO native pump-power variable.
+    "OpenLoop.SourceIdeal": {
+        "vars": {
+            "heat_power_supply": "networkModel.supply{name}.Q_flow",
+            "m_flow":            "networkModel.supply{name}.senMasFlo.m_flow",
+            "pressure_flow":     "networkModel.supply{name}.port_b.p",
+            "pressure_return":   "networkModel.supply{name}.port_a.p",
+        },
+        "pump_power": {"mode": "hydraulic"},
+    },
+}
+
+# Default station used when no system-model comp_model is available.
+DEFAULT_SUPPLY_MODEL = "OpenLoop.SourceIdeal"
+
+
+def resolve_supply_mask(comp_model=None, supply_model=None):
+    """Pick a SUPPLY_MASKS entry for a supply node.
+
+    Matches ``comp_model`` (a full Modelica path like
+    ``AixLib...Supplies.OpenLoop.SourceIdeal``) against the registry keys by
+    suffix, so both the short key and the full path resolve. Falls back to the
+    explicit ``supply_model`` argument, then to ``DEFAULT_SUPPLY_MODEL``.
+
+    Returns (mask_entry, resolved_key) or (None, None) if nothing matches.
+    """
+    candidates = [c for c in (comp_model, supply_model, DEFAULT_SUPPLY_MODEL) if c]
+    for cand in candidates:
+        if cand in SUPPLY_MASKS:
+            return SUPPLY_MASKS[cand], cand
+        for key in SUPPLY_MASKS:
+            if cand.endswith(key):
+                return SUPPLY_MASKS[key], key
+    return None, None
+
+
+# Cache scope used when converting .mat -> parquet. "fast" keeps only the
+# columns the analysis pipeline actually reads (derived from AIXLIB_MASKS);
+# "full" keeps every variable (the original behaviour). Flip to "full" project-
+# wide to restore the old all-variables cache.
+DEFAULT_CACHE_SCOPE = "fast"  # "fast" | "full"
+
+
+def mask_keep_suffixes(masks=None):
+    """The stable name suffixes of all mask templates — the part after the last
+    ``{...}`` placeholder (e.g. ``networkModel.pipe{pipe_code}{type}.port_a.m_flow``
+    -> ``.port_a.m_flow``).
+
+    Derived from :data:`AIXLIB_MASKS` so there is a single source of truth: extend
+    AIXLIB_MASKS with a new quantity and both reading (``build_filter_list_*``) and
+    fast conversion pick it up automatically — no second list to maintain. ``Time``
+    is always included.
+    """
+    if masks is None:
+        masks = AIXLIB_MASKS
+    out = set()
+
+    def _walk(d):
+        for value in d.values():
+            if isinstance(value, dict):
+                _walk(value)
+            elif isinstance(value, str):
+                out.add(value.rsplit("}", 1)[-1])
+
+    _walk(masks)
+    # Also keep the exchangeable supply-station columns (registry lives outside
+    # AIXLIB_MASKS) so the fast cache does not drop them.
+    _walk(SUPPLY_MASKS)
+    return tuple(out) + ("Time",)
+
+
+def _default_convert_kwargs():
+    """Conversion kwargs implied by :data:`DEFAULT_CACHE_SCOPE`."""
+    if DEFAULT_CACHE_SCOPE == "full":
+        return {"keep_suffixes": None}
+    return {"keep_suffixes": mask_keep_suffixes()}
+
 
 def build_filter_list_pipe(graph, mask, logger=None):
     """
@@ -373,9 +555,11 @@ def build_filter_list_pipe(graph, mask, logger=None):
     # Iterate through all categories in the mask
     for category_name, category_data in mask.items():
         if category_name not in ["edge", "node"]:
-            # "building" is handled separately by build_filter_list_demand /
-            # assign_demand_power (keyed by building name, not pipe code).
-            if category_name != "building":
+            # These are handled by their own builders/assigners, not by pipe-code:
+            #   "building"     -> build_filter_list_demand / assign_demand_power
+            #   "edge_optional"-> build_filter_list_loss   / assign_edge_loss
+            #   "supply"       -> build_filter_list_supply / assign_supply_values
+            if category_name not in ("building", "edge_optional", "supply"):
                 logger.warning(f"Unknown category '{category_name}' in mask, skipping")
             continue
             
@@ -482,6 +666,57 @@ def build_filter_list_demand(graph, MASK, realized=False, logger=None):
 
     logger.info(f"Created demand-power filter list with {len(columns)} entries "
                 f"(realized={realized})")
+    return columns
+
+
+def build_filter_list_loss(graph, MASK, logger=None):
+    """Build the list of simulation columns for the OPTIONAL per-pipe heat loss.
+
+    Reads the ``edge_optional`` mask section (keyed by pipe code, like the
+    required ``edge`` section) and formats one column per pipe per variable.
+    Returns an empty list if MASK has no ``edge_optional`` section.
+    """
+    opt = MASK.get("edge_optional")
+    if not opt:
+        return []
+    type_prefix = get_supply_type_prefix(graph)
+    columns = []
+    for edge in graph.edges:
+        pipe_code = graph.edges[edge]["name"]
+        for var, pattern in opt.items():
+            # The return-line loss is only meaningful on a supply graph; on a
+            # return graph its pipes are already the Q_loss, so skip it.
+            if var == "Q_loss_return" and type_prefix == "R":
+                continue
+            columns.append(pattern.format(pipe_code=pipe_code, type=type_prefix))
+    if logger:
+        logger.info(f"Created heat-loss filter list with {len(columns)} entries")
+    return columns
+
+
+def build_filter_list_supply(graph, MASK, logger=None):
+    """Build the list of simulation columns for the OPTIONAL supply-node
+    quantities (thermal power, mass flow, flow/return pressure).
+
+    Keyed by the SUPPLY building NAME (e.g. "S1"), driven by the ``supply``
+    mask section (injected from SUPPLY_MASKS by assign_data_pipeline). Returns
+    an empty list if MASK has no ``supply`` section.
+    """
+    sup = MASK.get("supply")
+    if not sup:
+        return []
+    vars_ = sup.get("vars", {})
+    columns = []
+    for node in graph.nodelist_building:
+        if not graph.nodes[node].get("is_supply_heating"):
+            continue
+        name = graph.nodes[node].get("name")
+        if name is None:
+            continue
+        for pattern in vars_.values():
+            columns.append(pattern.format(name=name))
+    if logger:
+        logger.info(f"Created supply filter list with {len(columns)} entries")
     return columns
 
 
@@ -606,9 +841,46 @@ def derive_specific_pressure_loss(graph):
         graph.edges[edge]["dp_spec"] = dp / length
 
 
+def assign_edge_loss(graph, MASK, df, logger=None):
+    """Assign the OPTIONAL per-pipe heat loss (edge_optional) onto edges.
+
+    Writes graph.edges[e]["Q_loss"] (pd.Series, W; >0 = loss) from the pipe's
+    own heatPort.Q_flow. GUARDED: a missing column degrades to a debug log
+    instead of raising, so a model/cache without heatPort logging is tolerated.
+
+    Returns the number of (edge, variable) assignments made.
+    """
+    if logger is None:
+        logger = set_up_terminal_logger(f"{__name__}.assign_edge_loss")
+    opt = MASK.get("edge_optional")
+    if not opt:
+        return 0
+    type_suffix = get_supply_type_prefix(graph)
+    assigned = 0
+    missing = 0
+    for edge in graph.edges:
+        pipe_name = graph.edges[edge]["name"]
+        for edge_variable, variable_mask in opt.items():
+            # Return-line loss only on a supply graph (avoid double counting / a
+            # non-existent pipe<code>RR on a return graph).
+            if edge_variable == "Q_loss_return" and type_suffix == "R":
+                continue
+            column = variable_mask.format(pipe_code=pipe_name, type=type_suffix)
+            if column in df.columns:
+                graph.edges[edge][edge_variable] = df[column]
+                assigned += 1
+            else:
+                missing += 1
+                logger.debug(f"Heat-loss column not found for pipe '{pipe_name}': {column}")
+    logger.info(f"Assigned heat loss to {assigned} edge slots "
+                f"({missing} missing)")
+    return assigned
+
+
 ##### Assign building (demand) power
 
 CP_WATER_DEFAULT = 4184.0  # J/(kg*K), AixLib water default for realized-power reconstruction
+RHO_WATER_DEFAULT = 983.0  # kg/m3, ~60 degC; for ideal-hydraulic pump power V*dp
 
 
 def assign_demand_power(graph, df, MASK, realized=False, cp=CP_WATER_DEFAULT, logger=None):
@@ -686,6 +958,89 @@ def assign_demand_power(graph, df, MASK, realized=False, cp=CP_WATER_DEFAULT, lo
         logger.info(f"Assigned return temperature to {tret_assigned} building nodes")
     if realized:
         logger.info(f"Assigned realized demand power to {realized_assigned} building nodes")
+
+
+##### Assign supply (pump power + supply thermal power)
+
+def assign_supply_values(graph, df, MASK, rho=RHO_WATER_DEFAULT, logger=None):
+    """Assign supply-node quantities and derive the pump power.
+
+    For every is_supply_heating node carrying a "name", writes the time series
+    listed in the (injected) ``supply`` mask section - e.g. heat_power_supply
+    [W], m_flow [kg/s], pressure_flow / pressure_return [Pa] - and derives:
+
+      dp_pump [Pa]            = pressure_flow - pressure_return
+      pump_power_hydraulic [W]= |m_flow| / rho * dp_pump      (mode "hydraulic")
+        OR pump_power_native, read directly                   (mode "native")
+
+    SourceIdeal is an ideal pressure source with no native pump-power output, so
+    the hydraulic reconstruction is the ideal pumping power (NO efficiency). The
+    pump-power mode comes from the supply mask entry, so a real-pump station can
+    expose a logged variable instead (see SUPPLY_MASKS).
+
+    GUARDED: missing columns degrade to a debug log instead of raising.
+
+    Returns the number of supply nodes that received at least one value.
+    """
+    if logger is None:
+        logger = set_up_terminal_logger(f"{__name__}.assign_supply_values")
+    sup = MASK.get("supply")
+    if not sup:
+        logger.debug("No 'supply' section in MASK; skipping supply values.")
+        return 0
+
+    vars_ = sup.get("vars", {})
+    pump_spec = sup.get("pump_power", {})
+    pump_mode = pump_spec.get("mode", "hydraulic")
+    nodes_touched = 0
+    pump_assigned = 0
+
+    for node in graph.nodelist_building:
+        if not graph.nodes[node].get("is_supply_heating"):
+            continue
+        name = graph.nodes[node].get("name")
+        if name is None:
+            continue
+
+        present = {}
+        for var, pattern in vars_.items():
+            column = pattern.format(name=name)
+            if column in df.columns:
+                graph.nodes[node][var] = df[column]
+                present[var] = df[column]
+            else:
+                logger.debug(f"Supply column not found for '{name}': {column}")
+        if present:
+            nodes_touched += 1
+
+        # Pressure rise across the supply (pump head).
+        if "pressure_flow" in present and "pressure_return" in present:
+            dp_pump = present["pressure_flow"] - present["pressure_return"]
+            graph.nodes[node]["dp_pump"] = dp_pump
+        else:
+            dp_pump = None
+
+        # Pump power.
+        if pump_mode == "native":
+            native_var = pump_spec.get("var")
+            if native_var and native_var in present:
+                graph.nodes[node]["pump_power"] = present[native_var]
+                pump_assigned += 1
+            else:
+                logger.debug(f"Native pump-power var missing for supply '{name}'")
+        else:  # "hydraulic": ideal pumping power V*dp = |m_flow|/rho * dp_pump
+            if dp_pump is not None and "m_flow" in present:
+                graph.nodes[node]["pump_power_hydraulic"] = (
+                    present["m_flow"].abs() / rho * dp_pump
+                )
+                pump_assigned += 1
+            else:
+                logger.debug(f"Cannot derive hydraulic pump power for supply '{name}' "
+                             f"(need m_flow + both pressures)")
+
+    logger.info(f"Assigned supply values to {nodes_touched} supply nodes "
+                f"({pump_assigned} with pump power, mode='{pump_mode}')")
+    return nodes_touched
 
 
 ##### Validation functions
@@ -916,6 +1271,10 @@ def assign_data_pipeline(
     node_to_port_mapping: Optional[Dict] = None,
     with_demand_power: bool = True,
     demand_power_realized: bool = False,
+    with_heat_loss: bool = True,
+    with_pump_power: bool = True,
+    supply_model: str = DEFAULT_SUPPLY_MODEL,
+    rho: float = RHO_WATER_DEFAULT,
     logger: Optional[logging.Logger] = None
 ) -> ug.UESGraph:
     """
@@ -945,6 +1304,18 @@ def assign_data_pipeline(
                       building name). Missing columns degrade to a warning.
         demand_power_realized: If True, additionally reconstruct realized delivered
                       power (m_flow*cp*dT) per substation from the sensor columns.
+        with_heat_loss: If True (default), assign the per-pipe heat loss
+                      (edge["Q_loss"], W) from the pipe's heatPort.Q_flow. Missing
+                      columns degrade to a warning (no exception); see assign_edge_loss.
+        with_pump_power: If True (default), assign supply-node quantities
+                      (heat_power_supply, m_flow, pressures) and derive the pump
+                      power (pump_power_hydraulic by default). Missing columns
+                      degrade to a warning; see assign_supply_values.
+        supply_model: Supply-station model key for SUPPLY_MASKS (default
+                      "OpenLoop.SourceIdeal"). Per supply node this is overridden
+                      by the system model's comp_model when available, so the
+                      supply mask is EXCHANGEABLE per station.
+        rho: water density [kg/m3] for the ideal-hydraulic pump power V*dp.
         logger: Logger instance. If None, creates a new file logger
         
     Returns:
@@ -1037,26 +1408,42 @@ def assign_data_pipeline(
         
         # Step 2: Create or use port mapping (if available)
         port_mapping = None
+        supply_comp_model = None  # detected from the system model, drives supply mask
         if assignment_mode == "full":
             logger.info("Step 2/6: Setting up port mapping for node assignment")
-            
+
             if node_to_port_mapping is not None:
                 port_mapping = node_to_port_mapping
                 logger.info("SUCCESS: Using provided node-to-port mapping")
-                
+
             elif system_model_path is not None:
                 system_model_path = Path(system_model_path)
                 if not system_model_path.exists():
                     raise FileNotFoundError(f"System model file not found: {system_model_path}")
-                
+
                 sysm_graph = ut.load_system_model_from_json(str(system_model_path))
                 port_mapping = graph_transformation.map_system_model_to_uesgraph(sysm_graph, graph)
                 logger.info(f"SUCCESS: Created port mapping from system model ({len(port_mapping)} components)")
-                
+                supply_comp_model = _detect_supply_comp_model(sysm_graph, logger)
+
         elif assignment_mode == "edges_only":
             logger.info("Step 2/6: Skipping port mapping - edge-only assignment mode")
             logger.warning("WARNING: No node data will be assigned (temperatures, pressures)")
-        
+
+        # Resolve the EXCHANGEABLE supply mask (pump power + supply thermal power).
+        # The system model's comp_model wins; otherwise the supply_model argument.
+        # Never mutate the shared AIXLIB_MASKS dict - inject into a shallow copy.
+        if with_pump_power and "supply" not in MASK:
+            supply_entry, supply_key = resolve_supply_mask(
+                comp_model=supply_comp_model, supply_model=supply_model)
+            if supply_entry is not None:
+                MASK = {**MASK, "supply": supply_entry}
+                logger.info(f"SUCCESS: Using supply mask '{supply_key}' "
+                            f"(comp_model={supply_comp_model})")
+            else:
+                logger.warning(f"WARNING: No supply mask for model "
+                               f"'{supply_comp_model or supply_model}'; pump power skipped")
+
         # Step 3: Process simulation data
         logger.info("Step 3/6: Processing simulation data")
         
@@ -1064,49 +1451,89 @@ def assign_data_pipeline(
         if not simulation_data_path.exists():
             raise FileNotFoundError(f"Simulation data file not found: {simulation_data_path}")
         
-        # Convert .mat to .gzip if needed and get the processed file path
+        # Resolve/convert to the parquet cache (handles .mat -> .parquet) and get
+        # the processed file path
         processed_simulation_path = check_input_file(file_path=str(simulation_data_path), logger=logger)
         logger.info(f"SUCCESS: Using processed simulation file: {processed_simulation_path}")
         
-        # Build filter list for required variables
-        filter_list = build_filter_list_pipe(graph, mask=MASK, logger=logger)
-        logger.info(f"SUCCESS: Built filter list with {len(filter_list)} variables")
+        # Build filter list for required variables. Graph+mask only, so it is
+        # stable across a cache rebuild and computed once, outside the retry.
+        filter_list_pipe = build_filter_list_pipe(graph, mask=MASK, logger=logger)
+        logger.info(f"SUCCESS: Built filter list with {len(filter_list_pipe)} variables")
 
-        # Add building (demand) power columns - keyed by building name, not pipe
-        # code. These may be absent (e.g. edge-only setups), so we intersect with
-        # the file's available columns and degrade missing ones to a warning
-        # instead of failing the strict validation below.
-        if with_demand_power:
-            demand_filter = build_filter_list_demand(
-                graph, MASK, realized=demand_power_realized, logger=logger)
-            if demand_filter:
-                available_columns = set(
-                    pq.ParquetFile(processed_simulation_path).schema.names)
-                present = [c for c in demand_filter if c in available_columns]
-                missing = [c for c in demand_filter if c not in available_columns]
-                if missing:
-                    logger.warning(
-                        f"WARNING: {len(missing)}/{len(demand_filter)} demand-power "
-                        f"columns not in data file; those buildings are skipped. "
-                        f"e.g. {missing[:3]}")
-                filter_list = filter_list + present
-                logger.info(f"SUCCESS: Added {len(present)} demand-power columns")
+        # Building (demand) power columns - keyed by building name, not pipe code.
+        demand_filter = (build_filter_list_demand(
+            graph, MASK, realized=demand_power_realized, logger=logger)
+            if with_demand_power else [])
 
-        # Validate that all required columns exist in the processed file
-        column_validation = validate_columns_exist(
-            file_path=processed_simulation_path, 
-            required_columns=filter_list,
-            logger=logger
-        )
-        if not column_validation:
-            raise KeyError("Required simulation variables not found in data file")
-        
-        # Load and process simulation results
-        df = process_simulation_result(
-            file_path=processed_simulation_path, 
-            filter_list=filter_list, 
-            logger=logger
-        )
+        # OPTIONAL columns (heat loss per pipe, supply quantities). Like the
+        # demand columns these are NOT required: missing ones degrade to a
+        # warning instead of raising, so an older model/cache still works.
+        loss_filter = (build_filter_list_loss(graph, MASK, logger=logger)
+                       if with_heat_loss else [])
+        supply_filter = (build_filter_list_supply(graph, MASK, logger=logger)
+                         if with_pump_power else [])
+
+        # Self-heal: a fast cache that predates an AIXLIB_MASKS extension can miss a
+        # required (mask-derived) pipe column. On the first KeyError, force a
+        # reconvert with the *current* masks and retry once — requested columns
+        # always come from AIXLIB_MASKS, so the rebuilt (still lean) cache has them.
+        df = None
+        for attempt in (1, 2):
+            try:
+                filter_list = list(filter_list_pipe)
+
+                # Optional column groups (demand power, per-pipe heat loss, supply
+                # quantities) may be absent. Intersect each with the available
+                # columns and degrade missing ones to a warning - never required.
+                if demand_filter or loss_filter or supply_filter:
+                    available_columns = set(
+                        pq.ParquetFile(processed_simulation_path).schema.names)
+
+                    def _add_optional(group, label):
+                        if not group:
+                            return
+                        present = [c for c in group if c in available_columns]
+                        missing = [c for c in group if c not in available_columns]
+                        if missing:
+                            logger.warning(
+                                f"WARNING: {len(missing)}/{len(group)} {label} columns "
+                                f"not in data file; skipped. Rebuild the cache if they "
+                                f"were just added. e.g. {missing[:3]}")
+                        filter_list.extend(present)
+                        logger.info(f"SUCCESS: Added {len(present)} {label} columns")
+
+                    _add_optional(demand_filter, "demand-power")
+                    _add_optional(loss_filter, "heat-loss")
+                    _add_optional(supply_filter, "supply")
+
+                # Validate that all required columns exist in the processed file.
+                column_validation = validate_columns_exist(
+                    file_path=processed_simulation_path,
+                    required_columns=filter_list,
+                    logger=logger
+                )
+                if not column_validation:
+                    raise KeyError("Required simulation variables not found in data file")
+
+                # Load and process simulation results.
+                df = process_simulation_result(
+                    file_path=processed_simulation_path,
+                    filter_list=filter_list,
+                    logger=logger
+                )
+                break
+            except KeyError:
+                mat_sibling = Path(
+                    os.path.splitext(str(simulation_data_path))[0] + ".mat")
+                if attempt == 2 or not mat_sibling.exists():
+                    raise
+                logger.warning(
+                    "Required column missing from cache -> forcing a reconvert with "
+                    "current masks and retrying once.")
+                processed_simulation_path = check_input_file(
+                    file_path=str(simulation_data_path), force_reconvert=True,
+                    logger=logger)
         logger.info(f"SUCCESS: Loaded simulation data: {df.shape[0]} timesteps")
         
         # Step 4: Prepare DataFrame
@@ -1138,7 +1565,15 @@ def assign_data_pipeline(
         if with_demand_power:
             assign_demand_power(graph, df, MASK,
                                 realized=demand_power_realized, logger=logger)
-        
+
+        # Assign optional per-pipe heat loss onto edges (guarded; no-op if absent)
+        if with_heat_loss:
+            assign_edge_loss(graph, MASK, df, logger=logger)
+
+        # Assign supply quantities + derive pump power onto supply nodes (guarded)
+        if with_pump_power:
+            assign_supply_values(graph, df, MASK, rho=rho, logger=logger)
+
         # Step 6: Validate results
         logger.info("Step 6/6: Validating assignment results")
         
@@ -1172,8 +1607,33 @@ def assign_data_pipeline(
         raise
 
 
+def _detect_supply_comp_model(sysm_graph, logger=None):
+    """Read the supply station's ``comp_model`` from the system-model graph.
+
+    Used to auto-select the EXCHANGEABLE supply mask (SUPPLY_MASKS). Scans the
+    system model for a heating-supply node and returns its comp_model string
+    (e.g. "AixLib...Supplies.OpenLoop.SourceIdeal"), or None if not found. If
+    several supply nodes disagree, the first is used and a warning is logged
+    (per-node masks are future work).
+    """
+    found = []
+    try:
+        for _, attrs in sysm_graph.nodes(data=True):
+            if attrs.get("is_supply_heating") and attrs.get("comp_model"):
+                found.append(attrs["comp_model"])
+    except Exception as exc:  # pragma: no cover - defensive
+        if logger:
+            logger.debug(f"Could not read supply comp_model from system model: {exc}")
+        return None
+    if not found:
+        return None
+    if logger and len(set(found)) > 1:
+        logger.warning(f"Multiple supply comp_models {set(found)}; using '{found[0]}'")
+    return found[0]
+
+
 def _determine_assignment_mode(
-    system_model_path: Optional[Union[str, Path]], 
+    system_model_path: Optional[Union[str, Path]],
     node_to_port_mapping: Optional[Dict],
     logger: logging.Logger
 ) -> str:

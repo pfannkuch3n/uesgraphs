@@ -283,7 +283,8 @@ def mat_to_pandas(fname='dsres.mat',
                   names=None,
                   aliases=None,
                   with_unit=True,
-                  constants_only=False):
+                  constants_only=False,
+                  keep_suffixes=None):
     """
     Return a `pandas.DataFrame` with values from selected variables
     for the given .mat file.
@@ -312,11 +313,28 @@ def mat_to_pandas(fname='dsres.mat',
         The first data matrix usually contains all of the constants,
         parameters, and variables that don't vary.  If only that information is
         needed, it may save resources to set *constants_only* to *True*.
+    :param keep_suffixes:
+        Optional iterable of name suffixes (e.g. ``('.port_a.m_flow', '.dp')``).
+        When *names* is not given, only variables whose name ends with one of
+        these suffixes are kept (plus ``Time``) — a model-independent fast-track
+        that avoids materialising thousands of unused trajectories. ``None``
+        (default) keeps every variable, i.e. the original behaviour. If the
+        filter matches nothing, it degrades safely to keeping all variables.
     """
     _variables = loadsim(fname, constants_only)
     # Avoid mutable argument
     if aliases is None:
         aliases = {}
+
+    # Fast-track: when no explicit names are requested, restrict to the variables
+    # whose name ends with one of the requested suffixes (keyed off AixLib masks
+    # upstream). Falls back to "all" if the filter matches nothing so a wrong
+    # suffix list never produces an empty frame.
+    if not names and keep_suffixes:
+        matched = [n for n in _variables.keys()
+                   if n.endswith(tuple(keep_suffixes))]
+        if matched:
+            names = matched
 
     # Create the list of variable names.
     if names:
@@ -368,18 +386,70 @@ def mat_to_pandas(fname='dsres.mat',
         time_key = 'Time'
     return pd.DataFrame(data).set_index(time_key)
 
+def keep_fingerprint(keep_suffixes):
+    """Stable marker for the kept-column set a fast cache was built with.
+
+    Stored in the parquet metadata (``ues_keep``) so :func:`check_input_file` can
+    tell a cache built under an OLDER ``AIXLIB_MASKS`` (fewer kept suffixes) from a
+    current one and rebuild it once — otherwise an mtime-fresh cache silently lacks
+    columns added to the masks later (e.g. heat loss / supply quantities).
+    ``"full"`` for an all-columns cache.
+    """
+    if keep_suffixes is None:
+        return "full"
+    import hashlib
+
+    payload = "\n".join(sorted(keep_suffixes)).encode("utf-8")
+    return "fast:" + hashlib.sha1(payload).hexdigest()[:12]
+
+
 def mat_to_parquet(save_as,
                       fname='dsres.mat',
                   names=None,
                   aliases=None,
                   with_unit=True,
-                  constants_only=False):
+                  constants_only=False,
+                  keep_suffixes=None,
+                  compression='zstd',
+                  compression_level=3):
+    """Convert a Dymola/OpenModelica ``.mat`` result to a parquet cache.
+
+    Writes ``save_as + '.parquet'`` (the old ``.gzip`` name was a misnomer — the
+    payload was always parquet). ``compression='zstd'`` decompresses several
+    times faster than the previous gzip codec at a comparable size; the codec is
+    stored in the file metadata, so readers auto-detect it regardless of name.
+
+    A ``scope`` label (``"fast"``/``"full"``) and a ``ues_keep`` fingerprint of the
+    kept-column set are written to the parquet key-value metadata so a cache is
+    self-describing. :func:`check_input_file` rebuilds a cache whose ``ues_keep``
+    no longer matches the current masks (in addition to the file-mtime check).
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
     df = mat_to_pandas(fname=fname,
                        names=names,
                        aliases=aliases,
                        with_unit=with_unit,
-                       constants_only=constants_only)
-    save_as = save_as + '.gzip'
-    df.to_parquet(save_as, compression='gzip')
+                       constants_only=constants_only,
+                       keep_suffixes=keep_suffixes)
+    save_as = save_as + '.parquet'
+
+    table = pa.Table.from_pandas(df)
+    scope = 'full' if (names is None and keep_suffixes is None) else 'fast'
+    meta = dict(table.schema.metadata or {})
+    meta[b'ues_scope'] = scope.encode()
+    # Fingerprint of the kept-column set so a stale cache (built under older masks)
+    # is rebuilt by check_input_file. names-based subsets are opaque ("names").
+    if keep_suffixes is not None:
+        keep = keep_fingerprint(keep_suffixes)
+    elif names is not None:
+        keep = "names"
+    else:
+        keep = "full"
+    meta[b'ues_keep'] = keep.encode()
+    table = table.replace_schema_metadata(meta)
+    pq.write_table(table, save_as, compression=compression,
+                   compression_level=compression_level, use_dictionary=False)
 
     return save_as
