@@ -444,7 +444,7 @@ class SystemModelHeating(UESGraph):
                         from_junction=junction_ids[int(f"{from_node}{idx}")],
                         to_junction=junction_ids[int(f"{to_node}{idx}")],
                         length_km=uesgraph_input.edges[edge]["length"]/1000,
-                        diameter_m=d_in,
+                        inner_diameter_mm=d_in * 1000,
                         k_mm=edge_data["roughness"],
                         loss_coefficient=loss_coefficient,
                         u_w_per_m2k=heat_trans,
@@ -540,7 +540,8 @@ class SystemModelHeating(UESGraph):
         logger.info(f"Import completed: {len(junction_ids)} junctions, {len(pipe_list)} pipes")
         return junction_ids, pipe_list, heat_source_ids, heat_source_r_ids
     
-    def find_pipe_parameter(self, inner_diameter: float):
+    @staticmethod
+    def find_pipe_parameter(inner_diameter: float):
         """Finds the insulation thickness for a given inner diameter of the pipe.
 
         Uses a lookup table based on standard district heating pipe dimensions for
@@ -597,7 +598,8 @@ class SystemModelHeating(UESGraph):
 
         return diameter_in, insulation_thickness
     
-    def estimate_xi(self, l_pipe: float):
+    @staticmethod
+    def estimate_xi(l_pipe: float):
         """Estimates the total loss coefficient for a pipe based on its length.
 
         Calculates pressure losses from:
@@ -1008,7 +1010,7 @@ class SystemModelHeating(UESGraph):
                         mdot = self.pp_network.res_pipe["mdot_to_kg_per_s"][idx]
                     else:
                         mdot = self.pp_network.res_pipe["mdot_from_kg_per_s"][idx]
-                    d_in = self.pp_network.pipe["diameter_m"][idx]
+                    d_in = self.pp_network.pipe["inner_diameter_mm"][idx] / 1000
                     length = self.pp_network.pipe["length_km"][idx]*1000
                     sections = self.pp_network.pipe["sections"][idx]
                     T_ground = self.pp_network.pipe["text_k"][idx]
@@ -1075,7 +1077,7 @@ class SystemModelHeating(UESGraph):
                         mdot = self.pp_network.res_pipe["mdot_to_kg_per_s"][idx]
                     else:
                         mdot = self.pp_network.res_pipe["mdot_from_kg_per_s"][idx]
-                    d_in = self.pp_network.pipe["diameter_m"][idx]
+                    d_in = self.pp_network.pipe["inner_diameter_mm"][idx] / 1000
                     length = self.pp_network.pipe["length_km"][idx]*1000
                     sections = self.pp_network.pipe["sections"][idx]
                     T_ground = self.pp_network.pipe["text_k"][idx]

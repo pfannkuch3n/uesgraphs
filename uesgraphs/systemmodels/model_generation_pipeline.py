@@ -218,6 +218,27 @@ def uesgraph_to_modelica(uesgraph, simplification_level,
             logger.error(f"Failed to assign demand parameters: {e}")
             raise
 
+        # Step 7b: Guard gegen last-lose Demand-Knoten. Q_flow_nominal=0 -> im AixLib-Modell
+        # final m_flow_nominal=Q_flow_nominal/cp/dTDesign=0 -> m_flow_small=0 -> Division durch 0
+        # im Sensor (PartialDynamicFlowSensor) zur Laufzeit. Floor betrifft NUR die Auslegung/
+        # Regularisierung; die tatsaechlich gezogene Last (Q_flow_input-Zeitreihe) bleibt gleich.
+        Q_FLOOR_W = 1.0
+        _is_supply_key = f"is_supply_{uesgraph.graph.get('network_type', 'heating')}"
+        _floored = []
+        for _node in uesgraph.nodelist_building:
+            _nd = uesgraph.nodes[_node]
+            if _nd.get(_is_supply_key, False):
+                continue
+            _q = _nd.get("Q_flow_nominal")
+            if _q is not None and _q <= 0:
+                _nd["Q_flow_nominal"] = Q_FLOOR_W
+                _floored.append(_nd.get("name", _node))
+        if _floored:
+            logger.warning(
+                f"{len(_floored)} Demand-Knoten ohne Last -> Q_flow_nominal auf "
+                f"{Q_FLOOR_W} W gefloort (sonst m_flow_nominal=0 -> Division durch 0): {_floored}"
+            )
+
         # Step 8: Load ground temperature data for simulations
         logger.info("Loading ground temperature data")
         ground_temp_df = load_ground_temp_data(ground_temp_path)
